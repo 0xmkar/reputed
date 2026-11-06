@@ -6,6 +6,7 @@ import { hashscan, type Address, type AgentSummary, type CreatorDetail } from '@
 import { daysUntil, formatDate } from '@/lib/format';
 import { useCreator } from '@/lib/useCreator';
 import { AddressChip } from './AddressChip';
+import { ReportCompromised } from './creator/ReportCompromised';
 import { EmptyState } from './EmptyState';
 import { InlineError } from './InlineError';
 import { ScoreRing } from './ScoreRing';
@@ -30,7 +31,7 @@ function AgentStatus({ agent }: { agent: AgentSummary }) {
   }
 }
 
-function AgentsTable({ agents }: { agents: AgentSummary[] }) {
+function AgentsTable({ agents, isOwner }: { agents: AgentSummary[]; isOwner: boolean }) {
   if (agents.length === 0) return <EmptyState message="This creator has no agents yet." />;
   return (
     <div className="table-wrap">
@@ -46,6 +47,11 @@ function AgentsTable({ agents }: { agents: AgentSummary[] }) {
             <th>
               <span className="sr-only">View</span>
             </th>
+            {isOwner && (
+              <th>
+                <span className="sr-only">Owner actions</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -66,6 +72,11 @@ function AgentsTable({ agents }: { agents: AgentSummary[] }) {
               <td>
                 <Link href={`/agent/${a.agentId}`}>View</Link>
               </td>
+              {isOwner && (
+                <td>
+                  <ReportCompromised agent={a} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -205,7 +216,7 @@ export function CreatorView({ address }: { address: string }) {
 
       <section>
         <h2>Agents</h2>
-        <AgentsTable agents={creator.agents} />
+        <AgentsTable agents={creator.agents} isOwner={isOwner} />
       </section>
     </article>
   );

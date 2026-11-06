@@ -17,6 +17,13 @@ export interface RateLimits {
   agentFileByIp: RateLimit;
   reviewFileByIp: RateLimit;
   reviewFileByClient: RateLimit;
+  agentListByIp: RateLimit;
+  agentByIp: RateLimit;
+  creatorByIp: RateLimit;
+  /** Lookups of agents not scored yet: the only reads that reach the Mirror Node. */
+  agentLookupByIp: RateLimit;
+  /** The same for the whole process, since one client can come from many IPs. */
+  agentLookupTotal: RateLimit;
 }
 
 export const DEFAULT_RATE_LIMITS: RateLimits = {
@@ -26,6 +33,13 @@ export const DEFAULT_RATE_LIMITS: RateLimits = {
   agentFileByIp: perMinute(30),
   reviewFileByIp: perMinute(20),
   reviewFileByClient: perMinute(10),
+  // These three read local state. A person typing into the debounced Explorer peaks at about 200 a
+  // minute, and everyone behind one NAT shares a bucket.
+  agentListByIp: perMinute(300),
+  agentByIp: perMinute(300),
+  creatorByIp: perMinute(300),
+  agentLookupByIp: perMinute(10),
+  agentLookupTotal: perMinute(20),
 };
 
 type KeyOf = (req: FastifyRequest) => string;
@@ -78,17 +92,30 @@ const overBudget = (retryAfterSeconds: number) =>
     retryAfterSeconds,
   );
 
-export interface PublishGate {
-  /** Takes a slot, or throws a 503. Call the returned function once the submit ends. */
+const lookupsBusy = (retryAfterSeconds: number) =>
+  new ApiHttpError(
+    503,
+    'RATE_LIMITED',
+    `Too many agent lookups right now. Retry in ${retryAfterSeconds} seconds.`,
+    retryAfterSeconds,
+  );
+
+export interface Gate {
+  /** Takes a slot, or throws a 503. Call the returned function once the work ends. */
   acquire(): () => void;
 }
 
-/**
- * A new wallet costs nothing, so per-IP and per-wallet limits cannot bound what the
- * operator pays. This does, for the whole process. A failed submit stays counted
- * because it may still have been charged.
- */
-export function createPublishGate(budget: ReviewBudget, now: () => number = Date.now): PublishGate {
+interface GateBudget {
+  max: number;
+  windowMs: number;
+  maxConcurrent: number;
+}
+
+function createGate(
+  budget: GateBudget,
+  refuse: (retryAfterSeconds: number) => ApiHttpError,
+  now: () => number,
+): Gate {
   let windowStart = now();
   let used = 0;
   let active = 0;
@@ -96,14 +123,14 @@ export function createPublishGate(budget: ReviewBudget, now: () => number = Date
   return {
     acquire() {
       const time = now();
-      if (time - windowStart >= HOUR_MS) {
+      if (time - windowStart >= budget.windowMs) {
         windowStart = time;
         used = 0;
       }
-      if (used >= budget.maxPerHour) {
-        throw overBudget(Math.ceil((windowStart + HOUR_MS - time) / 1000));
+      if (used >= budget.max) {
+        throw refuse(Math.ceil((windowStart + budget.windowMs - time) / 1000));
       }
-      if (active >= budget.maxConcurrent) throw overBudget(BUSY_RETRY_SECONDS);
+      if (active >= budget.maxConcurrent) throw refuse(BUSY_RETRY_SECONDS);
 
       used++;
       active++;
@@ -112,4 +139,26 @@ export function createPublishGate(budget: ReviewBudget, now: () => number = Date
       };
     },
   };
+}
+
+/**
+ * A new wallet costs nothing, so per-IP and per-wallet limits cannot bound what the
+ * operator pays. This does, for the whole process. A failed submit stays counted
+ * because it may still have been charged.
+ */
+export function createPublishGate(budget: ReviewBudget, now: () => number = Date.now): Gate {
+  const { maxPerHour: max, maxConcurrent } = budget;
+  return createGate({ max, windowMs: HOUR_MS, maxConcurrent }, overBudget, now);
+}
+
+const MAX_CONCURRENT_LOOKUPS = 2;
+
+/** Bounds the Mirror Node reads all clients can cause, however many addresses they use. */
+export function createLookupGate(limit: RateLimit, now: () => number = Date.now): Gate {
+  const budget = {
+    max: limit.max,
+    windowMs: limit.timeWindow,
+    maxConcurrent: MAX_CONCURRENT_LOOKUPS,
+  };
+  return createGate(budget, lookupsBusy, now);
 }

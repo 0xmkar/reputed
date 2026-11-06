@@ -2,7 +2,7 @@
 
 The ordered steps from a funded operator to a live server, and which [plan](02-implementation-plan.md) tests each step unlocks.
 
-**Status:** steps 1–7 ran on testnet on 2026-11-06, and Phase 1 is proven there. Addresses and results are in [contracts/README.md](../contracts/README.md#testnet-deployment). Steps 8 onward have not run, because they need the World ID app.
+**Status:** Phases 1, 3, 4 and 5 ran on testnet on 2026-11-06, with real transactions. See [Testnet results](#testnet-results). Phase 2 has not run, because it needs the World ID app. Phases 3 to 5 used test-only creators registered directly with the verifier key, so they prove the chain, server and scorer, not World ID.
 
 Needs Foundry, Node 26, pnpm 9, `jq` and `python3`. Run `pnpm install` once at the repo root.
 
@@ -142,3 +142,22 @@ The implementation plan has not been updated for these:
 
 - **Stale credentials:** the issuer job that revokes a credential after a sale, rotation or compromise report is not built. Until it is, the old wallet keeps a frozen NFT, so `humanBacked` from the API is the authority, never the NFT.
 - **Separate keys:** on testnet the operator holds all three roles. Split them before anything beyond testnet.
+
+## Testnet results
+
+Run on 2026-11-06 with `server/scripts/testnet-phase3.ts`, `testnet-phase4.ts` and `testnet-phase5.ts`, against the real server with a 60-second epoch. The creators were `TEST_CREATOR_1` to `3`, whose nullifiers are labelled `reputed-test-only`. They never went through World ID.
+
+| Test | Result |
+| --- | --- |
+| T4.1–T4.9 | Passed. HCS bytes hash to `feedbackHash`, and a direct post from wallet U was refused |
+| T5.1 | Passed. Agent 159 scored 90, Tier 1, and snapshots reached topic 0.0.11339621 |
+| T5.2, T5.3 | Passed. Excluded as `not-human-backed` and `payment-not-found`, and the score stayed at 90 |
+| T5.4 | Passed. Two creators reported fraud: agent and creator fell from 90 to 22.5, P is 20, and the other creators stayed at 100 |
+| T5.5 | Passed. Agent 160 has no reviews and shows 22.5 and New, not 100 |
+| T5.8 | Passed. A rebuild from an empty database logged `inputsHash matches the topic` |
+| T8.3 | Passed. After a stop of more than one epoch, the scorer caught up and published the missed epochs |
+| T5.6, T5.7, T5.9 | Not run on testnet. The unit tests cover them. T5.6 needs two more creators because of the reporter cooldown |
+
+The agent score of 22.5 follows from one vote per creator: creator 2 averages 45 across their reviews, creator 3 gives 0, and the mean of those is 22.5. Creator score is the lower of that and 100 − P, which is 80.
+
+To boot the server before the World ID app exists, set `WORLD_RP_ID`, `RP_SIGNING_KEY`, `WORLD_ENVIRONMENT` and `WORLD_PROTOCOL_VERSION` to throwaway values for that process only. `POST /api/verify` will not work until real values are set.

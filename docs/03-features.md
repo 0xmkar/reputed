@@ -19,7 +19,7 @@ These features make one verified human equal exactly one creator. 4 of 7 are MVP
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
 | CR-1 | Wallet connection | MetaMask on Hedera testnet (chain 296), with a wrong-network check and one-click switch | MVP | 6 |
-| CR-2 | World ID verification | Orb-level proof, with the creator's wallet as the signal so the proof only works for that wallet | MVP | 2 |
+| CR-2 | World ID verification | Orb-level proof from a server-signed request, with the creator's wallet as the signal so the proof only works for that wallet, plus a wallet signature proving the creator controls it | MVP | 2 |
 | CR-3 | One human, one creator | A nullifier can register one creator, and a wallet can hold one nullifier | MVP | 1–2 |
 | CR-4 | On-chain creator record | `CreatorRegistered` event and an `isHumanBacked(wallet)` view | MVP | 1 |
 | CR-5 | HashPack wallet | HashPack support through WalletConnect | Later | 6 |
@@ -33,14 +33,14 @@ These features take a verified creator from an idea to a registered, linked, hum
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
 | AG-1 | Agent file builder | Turns a form into the ERC-8004 registration JSON: name, description, A2A/MCP endpoints, x402 support, `supportedTrust` | MVP | 3, 6 |
-| AG-2 | Agent file hosting | Stores the file on IPFS or HCS-1 and returns its URI and keccak-256 hash | MVP | 3 |
+| AG-2 | Agent file hosting | Validates the file and returns it as a base64 `data:` URI, with its keccak-256 hash. IPFS and HCS-1 hosting are not built | MVP | 3 |
 | AG-3 | ERC-8004 registration | Calls `register(agentURI)` on the Identity Registry and reads the new agent ID | MVP | 3 |
-| AG-4 | Token association helper | One click associates the agent wallet with the credential token | MVP | 3, 6 |
+| AG-4 | Token association helper | One click associates the agent wallet with the credential token, for a wallet with no free auto-association slots. Other wallets need no step | MVP | 3, 6 |
 | AG-5 | Link agent to creator | `linkAgent(agentId)`: checks ownership; the link is permanent | MVP | 1, 3 |
 | AG-6 | Human-backed credential on link | Mints the credential NFT into the agent wallet and freezes it | MVP | 1, 3 |
 | AG-7 | Resume onboarding | Detects an agent that is registered but not linked, and resumes at the Link step | MVP | 6 |
-| AG-8 | Separate agent wallet | `setAgentWallet` with an EIP-712 signature from the agent's own account | Next | 3 |
-| AG-9 | Edit agent file | Re-hosts the edited file and calls `setAgentURI` | Next | 6 |
+| AG-8 | Separate agent wallet | `setAgentWallet` with an EIP-712 signature from the agent's own account. After linking, `syncAgentWallet` backs the new wallet and issues it a credential | Next | 3 |
+| AG-9 | Edit agent file | Gets a new URI for the edited file and calls `setAgentURI` | Next | 6 |
 | AG-10 | HCS-14 UAID and HCS-11 profile | Makes the agent discoverable by HCS-10 tools | Later | 3 |
 
 ## Reviews and reputation
@@ -50,12 +50,12 @@ Reviews sit in the ERC-8004 Reputation Registry, where the agent being reviewed 
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
 | RV-1 | Give feedback | A 0–100 value plus tags, sent with `giveFeedback` | MVP | 4 |
-| RV-2 | Review file on HCS | Full review, comment and proof of payment on HCS; its hash goes on-chain | MVP | 4 |
+| RV-2 | Review file on HCS | Full review, comment and proof of payment on HCS, signed by the reviewer's wallet to be accepted; its hash goes on-chain | MVP | 4 |
 | RV-3 | Misconduct report | `tag1 = misconduct` plus a category such as `fraud` or `failed-settlement` | MVP | 4 |
 | RV-4 | Self-review block | The registry already rejects reviews from owners and operators; the UI also hides the button | MVP | 4, 6 |
-| RV-5 | Payment proof check | Mirror Node lookup confirming the reviewer paid the agent wallet before reviewing | MVP | 5 |
+| RV-5 | Payment proof check | Mirror Node lookup confirming the reviewer paid the agent wallet before reviewing. Each payment counts for one review | MVP | 5 |
 | RV-6 | Revoke own review | `revokeFeedback` by the original reviewer | Next | 4 |
-| RV-7 | Agent response | `appendResponse`, e.g. a refund note or a dispute | Next | 4 |
+| RV-7 | Agent response | `appendResponse`, e.g. a refund note or a dispute. The API shows only replies from the agent's owner or wallet | Next | 4 |
 | RV-8 | Full x402 payments | The official `@x402/hedera` flow as proof of payment | Later | 7 |
 
 ## Scoring and creator propagation
@@ -65,13 +65,13 @@ This is the part nobody else has: an agent's proven misconduct lowers its creato
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
 | SC-1 | Human-backed filter | Counts only reviews from human-backed wallets with a verified payment | MVP | 5 |
-| SC-2 | Agent score | A time-decayed average from 0 to 100, weighted by each reviewer's creator score | MVP | 5 |
+| SC-2 | Agent score | A time-decayed average from 0 to 100, weighted by each reviewer's creator score, with one vote per creator, and never above 100 minus the agent's penalties | MVP | 5 |
 | SC-3 | Trust tiers | Tier 1 at 90 or above, Tier 2 at 75 or above, Tier 3 below | MVP | 5 |
-| SC-4 | Misconduct penalties | Confirmed when reported by 2 different creators: fraud costs 20 points, a failed settlement 10 | MVP | 5 |
+| SC-4 | Misconduct penalties | Confirmed when reported by 2 different creators within 30 days: fraud costs 20 points, a failed settlement 10. One incident gives one penalty, confirming creators sit out for 180 days on that agent and category, and a confirmed penalty is final | MVP | 5 |
 | SC-5 | Creator score | Average of the creator's agents, never above 100 minus penalties, so extra good agents cannot hide a bad one | MVP | 5 |
 | SC-6 | Score inheritance | New agents start at their creator's current score | MVP | 5 |
 | SC-7 | HCS score snapshots | Agent and creator scores published to HCS every epoch | MVP | 5 |
-| SC-8 | Compromise cut-off | Penalties after `reportCompromise` hit the agent but not the creator | Next | 1, 5 |
+| SC-8 | Compromise cut-off | Penalties first reported after `reportCompromise` hit the agent but not the creator | Next | 1, 5 |
 | SC-9 | Penalty decay | Penalties halve every 180 days, so creators can recover | Next | 5 |
 | SC-10 | Reproducible scores | Each snapshot carries `configVersion` and `inputsHash`, so anyone can recompute it | Next | 5 |
 
@@ -84,7 +84,7 @@ Credentials are the few claims an agent wants to show, held in its wallet as non
 | CD-1 | Contract-controlled collection | One HTS NFT collection; CreatorRegistry is its treasury and holds the supply, freeze and wipe keys | MVP | 1 |
 | CD-2 | Non-transferable | The holder is frozen for the token after each delivery, so the NFT cannot be sold or moved | MVP | 1 |
 | CD-3 | Human-backed credential | Issued automatically when an agent is linked to its creator | MVP | 1, 3 |
-| CD-4 | Revocation | The issuer wipes a serial from the holder | MVP | 1 |
+| CD-4 | Revocation | The issuer wipes a serial from the holder. The job that does this automatically after a sale, rotation or compromise report is not built | MVP | 1 |
 | CD-5 | Signed VC file | Metadata (100 bytes or less) points to a signed W3C Verifiable Credential JSON | Next | 1 |
 | CD-6 | Milestone credentials | Issued automatically at thresholds, e.g. 100 verified paid jobs | Next | 5 |
 | CD-7 | Validator credentials | "Passed audit by X", issued by named validators | Later | 8 |
@@ -107,10 +107,10 @@ Agents check and review each other in code, under the same rules as the web app.
 
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
-| SD-1 | REST read API | `/api/agents` and `/api/creators`, served from the scorer cache | Next | 6, 7 |
+| SD-1 | REST read API | `/api/agents` and `/api/creators`, served from the scorer's live view | Next | 6, 7 |
 | SD-2 | SDK reads | `getAgent(agentId)` and `isHumanBacked(address)` | Next | 7 |
 | SD-3 | Counterparty gate | `verifyCounterparty(agentId, {minScore, humanBackedOnly})`, run before paying or hiring | Next | 7 |
-| SD-4 | SDK review | `review()` hosts the file and calls `giveFeedback` in one call | Next | 7 |
+| SD-4 | SDK review | `review()` signs and hosts the file and calls `giveFeedback` in one call | Next | 7 |
 | SD-5 | MCP server | `get_agent`, `verify_counterparty` and `review_agent` tools for LLM agents | Later | 7 |
 
 ## Operations, safety and admin

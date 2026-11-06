@@ -1,17 +1,27 @@
 import { SCORING_CONFIG, type ScoringConfig } from '../scoring/config.ts';
 import { computeScores } from '../scoring/score.ts';
-import { buildSnapshot, computeInputsHash, epochEnd } from '../scoring/snapshot.ts';
-import type { ConsensusTimestamp } from '../scoring/time.ts';
+import { buildSnapshot, computeInputsHash, epochEnd, epochOf } from '../scoring/snapshot.ts';
+import { compareConsensus, fromMillis, toNanos, type ConsensusTimestamp } from '../scoring/time.ts';
 import type { ScoreResult, Snapshot } from '../scoring/types.ts';
+import { parseAgentProfile, type AgentProfile } from './agentFile.ts';
 import { enrichState } from './enrich.ts';
 import { foldEvents, type ChainState } from './fold.ts';
 import { ingestAll, type LogSource } from './ingest.ts';
-import { buildInputs, scoringScope } from './inputs.ts';
+import { buildInputs, scoringScope, unlinkedCreatorAgents } from './inputs.ts';
 import { MirrorClient } from './mirror.ts';
 import { loadScorerSettings, type ScorerSettings } from './settings.ts';
 import { Store } from './store.ts';
 
 const LIVE_AS_OF = 'live_as_of';
+const STALE_AFTER_EPOCHS = 2;
+const MAX_TRACKED_AGENTS = 256;
+// Anyone can pile reviews onto a shared-registry agent, so neither a request nor a sync may be
+// made to read all of them at once. What is left over waits for a later sync.
+const LOOKUPS_PER_REQUEST = 10;
+const LOOKUPS_PER_SYNC = 10;
+const MAX_CACHED_PROFILES = 4_096;
+
+export type AgentLookup = 'missing' | 'ready' | 'cold';
 
 export interface LiveView {
   asOf: ConsensusTimestamp;
@@ -31,6 +41,9 @@ export interface RuntimeDeps {
   settings: ScorerSettings;
   config?: ScoringConfig;
   fetch?: typeof fetch;
+  /** Wall clock in milliseconds. */
+  now?: () => number;
+  maxTrackedAgents?: number;
 }
 
 /**
@@ -44,9 +57,14 @@ export class ScorerRuntime {
   readonly settings: ScorerSettings;
   readonly config: ScoringConfig;
   private readonly fetchImpl: typeof fetch | undefined;
+  private readonly clock: () => number;
+  private readonly maxTrackedAgents: number;
   private live: LiveView | null = null;
   /** Reviews whose last lookup failed: held out of both views until a sync resolves them. */
   private unresolved: Set<string> = new Set();
+  /** Lookups under way, so visitors to one agent share one set of Mirror reads. */
+  private readonly lookups = new Map<string, Promise<boolean>>();
+  private readonly profiles = new Map<string, AgentProfile>();
 
   constructor(deps: RuntimeDeps) {
     this.store = deps.store;
@@ -54,6 +72,8 @@ export class ScorerRuntime {
     this.settings = deps.settings;
     this.config = deps.config ?? SCORING_CONFIG;
     this.fetchImpl = deps.fetch;
+    this.clock = deps.now ?? Date.now;
+    this.maxTrackedAgents = deps.maxTrackedAgents ?? MAX_TRACKED_AGENTS;
 
     const { identityRegistry, reputationRegistry, creatorRegistry } = this.settings;
     const addresses = [
@@ -66,6 +86,39 @@ export class ScorerRuntime {
         console.warn(`scorer: the ${source} address changed, re-reading its events from the start`);
       }
     }
+    // Saved, so a scorer that keeps restarting cannot keep earning a fresh grace period.
+    if (!this.store.getMeta(this.watchKey())) this.store.setMeta(this.watchKey(), this.now());
+  }
+
+  private watchKey(): string {
+    return `scores_watched_from:${this.config.configVersion}:${this.config.epochSeconds}`;
+  }
+
+  /** The wall clock, as a consensus timestamp. */
+  now(): ConsensusTimestamp {
+    return fromMillis(this.clock());
+  }
+
+  /**
+   * Measured on the wall clock: a dead scorer stops moving the mirror's time, so scores would never
+   * age against it. Only this series counts, since another series' epoch numbers are not comparable.
+   *
+   * With nothing published yet, the same two epochs run from when this cache first saw the series.
+   * That gives a fresh deployment its grace period, and then reports a scorer that has never
+   * published as stale for good. A wiped cache starts the wait again, until the first sync restores
+   * the latest snapshot from the topic.
+   */
+  scoresStale(): boolean {
+    const now = this.now();
+    const latest = this.store.latestPublishedSnapshot(this.config);
+    if (latest) return epochOf(now, this.config) - latest.epoch >= STALE_AFTER_EPOCHS;
+    const waited = toNanos(now) - toNanos(this.store.getMeta(this.watchKey())!);
+    return waited >= BigInt(STALE_AFTER_EPOCHS * this.config.epochSeconds) * 1_000_000_000n;
+  }
+
+  /** Agents scored in the live view only. */
+  private extraAgentIds(state: ChainState): string[] {
+    return [...this.store.trackedAgents(), ...unlinkedCreatorAgents(state)];
   }
 
   private sources(): LogSource[] {
@@ -82,6 +135,7 @@ export class ScorerRuntime {
   private enrichOptions(asOf: ConsensusTimestamp) {
     return {
       asOf,
+      epochBoundary: epochEnd(epochOf(asOf, this.config), this.config),
       reviewsTopicId: this.settings.reviewsTopicId,
       ipfsGateway: this.settings.ipfsGateway,
       ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
@@ -98,18 +152,29 @@ export class ScorerRuntime {
     await ingestAll(this.store, this.mirror, this.sources());
 
     const state = foldEvents(this.store.eventsUpTo(asOf));
-    const scope = scoringScope(state, this.store.trackedAgents());
-    this.unresolved = await enrichState(
-      this.store,
-      this.mirror,
-      state,
-      scope,
-      this.enrichOptions(asOf),
-    );
+    const linked = scoringScope(state);
+    const extras = new Set(this.extraAgentIds(state).filter((agentId) => !linked.has(agentId)));
+    const options = this.enrichOptions(asOf);
+    const failed = await enrichState(this.store, this.mirror, state, linked, options);
+    const held = await enrichState(this.store, this.mirror, state, extras, {
+      ...options,
+      maxLookups: LOOKUPS_PER_SYNC,
+    });
+    this.unresolved = new Set([...failed, ...held]);
 
-    this.store.setMeta(LIVE_AS_OF, asOf);
-    this.live = this.buildLive(asOf);
+    this.refreshLive(asOf);
     return asOf;
+  }
+
+  /**
+   * The SDK's payment gate reads status from this view, so it only ever moves forward. A lookup that
+   * began before a sync must not bring back the time before a compromise report the sync found.
+   */
+  private refreshLive(asOf: ConsensusTimestamp): void {
+    const current = this.store.getMeta(LIVE_AS_OF);
+    const newest = current && compareConsensus(current, asOf) > 0 ? current : asOf;
+    this.store.setMeta(LIVE_AS_OF, newest);
+    this.live = this.buildLive(newest);
   }
 
   private buildLive(asOf: ConsensusTimestamp): LiveView {
@@ -117,7 +182,7 @@ export class ScorerRuntime {
     const { inputs } = buildInputs(state, this.store, {
       asOf,
       reviewsTopicId: this.settings.reviewsTopicId,
-      extraAgentIds: this.store.trackedAgents(),
+      extraAgentIds: this.extraAgentIds(state),
       unresolved: this.unresolved,
     });
     return { asOf, state, result: computeScores(inputs, this.config, asOf) };
@@ -131,23 +196,56 @@ export class ScorerRuntime {
     return this.live;
   }
 
-  /** Starts scoring an agent nobody linked, because someone asked for it. False if it does not exist. */
-  async trackAgent(agentId: string): Promise<boolean> {
-    const view = this.view();
-    if (!view?.state.identities.has(agentId)) return false;
-    if (view.result.agents.some((agent) => agent.agentId === agentId)) return true;
+  /**
+   * Each list request reads every listed profile, so a file is read and parsed once, not per request.
+   * Only a found file is kept: enrichment never replaces one, but a miss can turn into a file later.
+   */
+  agentProfile(uri: string): AgentProfile {
+    const cached = this.profiles.get(uri);
+    if (cached) return cached;
+    const body = this.store.agentFile(uri)?.body ?? null;
+    const profile = parseAgentProfile(body);
+    if (body !== null) {
+      if (this.profiles.size >= MAX_CACHED_PROFILES) {
+        this.profiles.delete(this.profiles.keys().next().value!);
+      }
+      this.profiles.set(uri, profile);
+    }
+    return profile;
+  }
 
-    const scope = new Set([agentId]);
-    const failed = await enrichState(
-      this.store,
-      this.mirror,
-      view.state,
-      scope,
-      this.enrichOptions(view.asOf),
-    );
+  /** Only 'cold' reads the mirror, so that is the case a caller has to ration. */
+  agentLookup(agentId: string): AgentLookup {
+    const view = this.view();
+    if (!view?.state.identities.has(agentId)) return 'missing';
+    return view.result.agents.some((agent) => agent.agentId === agentId) ? 'ready' : 'cold';
+  }
+
+  isLookingUp(agentId: string): boolean {
+    return this.lookups.has(agentId);
+  }
+
+  /** Starts scoring an agent nobody linked, because someone asked for it. False if it does not exist. */
+  trackAgent(agentId: string): Promise<boolean> {
+    const running = this.lookups.get(agentId);
+    if (running) return running;
+    const lookup = this.lookUp(agentId).finally(() => this.lookups.delete(agentId));
+    this.lookups.set(agentId, lookup);
+    return lookup;
+  }
+
+  private async lookUp(agentId: string): Promise<boolean> {
+    const lookup = this.agentLookup(agentId);
+    if (lookup !== 'cold') return lookup === 'ready';
+    const view = this.view()!;
+
+    const failed = await enrichState(this.store, this.mirror, view.state, new Set([agentId]), {
+      ...this.enrichOptions(view.asOf),
+      maxLookups: LOOKUPS_PER_REQUEST,
+    });
     for (const key of failed) this.unresolved.add(key);
-    this.store.trackAgent(agentId);
-    this.live = this.buildLive(view.asOf);
+    this.store.trackAgent(agentId, this.maxTrackedAgents);
+    this.refreshLive(view.asOf);
     return true;
   }
 

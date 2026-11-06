@@ -3,20 +3,30 @@ import {
   type Address,
   type AgentDetail,
   type AgentListResponse,
+  type AgentStatus,
   type AgentSummary,
   type Credential,
   type CreatorDetail,
   type Review,
   type ReviewResponse,
 } from '@reputed/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ApiHttpError, badRequest, chainError } from '../errors.ts';
-import { parseAgentProfile, type AgentProfile } from '../indexer/agentFile.ts';
+import type { AgentProfile } from '../indexer/agentFile.ts';
 import { feedbackKey } from '../indexer/fold.ts';
-import { agentInput } from '../indexer/inputs.ts';
-import { getScorerRuntime, type LiveView, type ScorerRuntime } from '../indexer/runtime.ts';
+import { agentInput, unlinkedCreatorAgents } from '../indexer/inputs.ts';
+import type { LiveView, ScorerRuntime } from '../indexer/runtime.ts';
+import {
+  byIp,
+  createLookupGate,
+  DEFAULT_RATE_LIMITS,
+  limiter,
+  type RateLimits,
+} from '../routes/rateLimits.ts';
+import { nextHalvingAt } from './misconduct.ts';
 import { toIso } from './time.ts';
+import { hashscanTxId } from './txid.ts';
 import type { AgentResult, ClassifiedReview } from './types.ts';
 import { agentWalletAt, ownerAt } from './wallets.ts';
 
@@ -28,6 +38,11 @@ const listQuery = z.object({
   q: z.string().trim().max(200).optional(),
   humanBacked: z.enum(['true', 'false']).optional(),
   minScore: z.coerce.number().min(0).max(100).optional(),
+  owner: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .transform((owner) => owner.toLowerCase())
+    .optional(),
 });
 
 function currentWallet(view: LiveView, agentId: string): Address | null {
@@ -38,6 +53,12 @@ function operatorChanged(view: LiveView, agentId: string): boolean {
   const link = view.state.links.get(agentId);
   const owner = view.state.identities.get(agentId)?.owner;
   return Boolean(link && owner && owner !== link.creator);
+}
+
+/** A compromise report wins over a transfer: the SDK's payment gate stops on this value. */
+function statusOf(view: LiveView, agentId: string): AgentStatus {
+  if (view.state.compromisedAt.has(agentId)) return 'compromised';
+  return operatorChanged(view, agentId) ? 'operator-changed' : 'active';
 }
 
 /** A report on any agent recorded on the wallet voids it, unless it is a creator wallet. */
@@ -65,8 +86,7 @@ function isHumanBacked(view: LiveView, agentId: string): boolean {
 }
 
 function profileOf(runtime: ScorerRuntime, view: LiveView, agentId: string): AgentProfile {
-  const uri = view.state.identities.get(agentId)?.agentUri;
-  return parseAgentProfile((uri && runtime.store.agentFile(uri)?.body) || null);
+  return runtime.agentProfile(view.state.identities.get(agentId)?.agentUri ?? '');
 }
 
 function toSummary(
@@ -95,6 +115,8 @@ function toSummary(
     creatorScore: creatorResult?.score ?? null,
     reviewsCounted: result.counted,
     registeredAt: registeredAt ? toIso(registeredAt) : toIso(view.asOf),
+    acceptsX402: profile.acceptsX402,
+    status: statusOf(view, agentId),
   };
 }
 
@@ -128,7 +150,7 @@ function toReview(view: LiveView, review: ClassifiedReview): Review {
     ...(review.exclusionReason ? { exclusionReason: review.exclusionReason } : {}),
     reviewerHumanBacked: review.reviewerHumanBacked,
     feedbackUri: review.feedbackUri,
-    txId: review.txHash,
+    txId: hashscanTxId(review.txHash, review.timestamp),
     ...(response ? { response } : {}),
   };
 }
@@ -136,6 +158,7 @@ function toReview(view: LiveView, review: ClassifiedReview): Review {
 function credentialsOf(runtime: ScorerRuntime, view: LiveView, agentId: string): Credential[] {
   const link = view.state.links.get(agentId);
   const wallet = currentWallet(view, agentId) ?? link?.wallets.at(-1)?.wallet;
+  // linkAgent and syncAgentWallet both vouch through _vouchFor, with the same human-backed metadata.
   const ownSerials = new Set(link?.wallets.map((vouched) => vouched.serial));
   const vouchSerials = new Set(
     [...view.state.links.values()].flatMap((item) => item.wallets.map(({ serial }) => serial)),
@@ -152,6 +175,7 @@ function credentialsOf(runtime: ScorerRuntime, view: LiveView, agentId: string):
     .map((credential) => ({
       tokenId: runtime.settings.credentialTokenId ?? '',
       serial: credential.serial,
+      kind: ownSerials.has(credential.serial) ? 'human-backed' : 'milestone',
       title: ownSerials.has(credential.serial) ? 'Human-backed' : `Credential #${credential.serial}`,
       issuedAt: toIso(credential.issuedAt),
       revoked: credential.revokedAt !== null,
@@ -179,6 +203,7 @@ function agentDetail(runtime: ScorerRuntime, view: LiveView, result: AgentResult
     penaltiesConfirmed: result.penaltiesConfirmed,
     updatedAt: toIso(view.asOf),
     ...(published ? { snapshotUrl: hashscan.topic(runtime.settings.scoresTopicId) } : {}),
+    scoresStale: runtime.scoresStale(),
   };
 }
 
@@ -194,19 +219,28 @@ function listAgents(
   view: LiveView | null,
   query: z.output<typeof listQuery>,
 ): AgentListResponse {
+  const scoresStale = runtime.scoresStale();
   if (!view) {
-    return { agents: [], stats: { agents: 0, humanBacked: 0, creators: 0, reviewsCounted: 0 } };
+    const stats = { agents: 0, humanBacked: 0, creators: 0, reviewsCounted: 0 };
+    return { agents: [], stats, scoresStale };
   }
-  // Lookups are what add unlinked agents to the view, and a visit must not change this list.
+  // creator === null tells onboarding to resume at the Link step, and linkAgent needs a creator.
+  const ownerCanLink = query.owner !== undefined && view.state.creators.has(query.owner as Address);
+  // Lookups also add unlinked agents to the view, and a visit must not change this list.
+  const unlinked = new Set(unlinkedCreatorAgents(view.state));
   const all = view.result.agents
-    .filter((result) => result.creator !== null)
+    .filter((result) => result.creator !== null || unlinked.has(result.agentId))
     .map((result) => toSummary(runtime, view, result, profileOf(runtime, view, result.agentId)));
   const agents = all
     .filter((agent) => !query.q || matches(agent, query.q))
-    .filter(
-      (agent) => query.humanBacked === undefined || String(agent.humanBacked) === query.humanBacked,
-    )
+    // Web sends false when its toggle is off and expects every agent, so only true filters.
+    .filter((agent) => query.humanBacked !== 'true' || agent.humanBacked)
     .filter((agent) => query.minScore === undefined || agent.score.value >= query.minScore)
+    .filter(
+      (agent) =>
+        query.owner === undefined ||
+        (agent.owner === query.owner && (agent.creator !== null || ownerCanLink)),
+    )
     .sort((a, b) => b.score.value - a.score.value);
 
   return {
@@ -217,6 +251,7 @@ function listAgents(
       creators: view.result.creators.length,
       reviewsCounted: all.reduce((total, agent) => total + agent.reviewsCounted, 0),
     },
+    scoresStale,
   };
 }
 
@@ -230,11 +265,17 @@ function creatorDetail(runtime: ScorerRuntime, view: LiveView, address: Address)
     score: creator.score,
     tier: creator.tier,
     penaltyTotal: creator.P,
-    penalties: creator.penalties.map(({ agentId, category, points, confirmedAt }) => ({
+    penalties: creator.penalties.map(({ agentId, category, points, confirmedAt, reports }) => ({
       agentId,
       category,
       points,
       confirmedAt: toIso(confirmedAt),
+      nextHalvingAt: toIso(nextHalvingAt(confirmedAt, runtime.now(), runtime.config)),
+      reports: reports.map(({ client, feedbackIndex, txHash, timestamp }) => ({
+        clientAddress: client,
+        feedbackIndex,
+        txId: hashscanTxId(txHash, timestamp),
+      })),
     })),
     agents: view.result.agents
       .filter((agent) => agent.creator === address)
@@ -244,9 +285,33 @@ function creatorDetail(runtime: ScorerRuntime, view: LiveView, address: Address)
 
 export function registerReadRoutes(
   app: FastifyInstance,
-  runtime: ScorerRuntime = getScorerRuntime(),
+  runtime: ScorerRuntime,
+  rateLimits: RateLimits = DEFAULT_RATE_LIMITS,
 ): void {
+  const listLimit = limiter(app, rateLimits.agentListByIp, byIp('agents'));
+  const agentLimit = limiter(app, rateLimits.agentByIp, byIp('agent'));
+  const creatorLimit = limiter(app, rateLimits.creatorByIp, byIp('creator'));
+  const lookupLimit = limiter(app, rateLimits.agentLookupByIp, byIp('agent-lookup'));
+  const lookupGate = createLookupGate(rateLimits.agentLookupTotal);
+
+  /** Joining a lookup already under way costs the mirror nothing, so it spends no allowance. */
+  async function lookUp(req: FastifyRequest, agentId: string): Promise<void> {
+    if (!runtime.isLookingUp(agentId)) await lookupLimit(req);
+    // Asked again: the limiter yields, and the visitor ahead may have started this lookup meanwhile.
+    const release = runtime.isLookingUp(agentId) ? undefined : lookupGate.acquire();
+    try {
+      if (!(await runtime.trackAgent(agentId))) throw notFound('Agent');
+    } catch (err) {
+      if (err instanceof ApiHttpError) throw err;
+      req.log.error({ err: (err as Error).name }, 'agent lookup failed');
+      throw chainError('Could not read this agent from the Mirror Node. Try again.');
+    } finally {
+      release?.();
+    }
+  }
+
   app.get('/api/agents', async (req): Promise<AgentListResponse> => {
+    await listLimit(req);
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) {
       const field = parsed.error.issues[0]?.path.join('.') || 'query';
@@ -258,17 +323,14 @@ export function registerReadRoutes(
   app.get<{ Params: { agentId: string } }>(
     '/api/agents/:agentId',
     async (req): Promise<AgentDetail> => {
+      await agentLimit(req);
       const { agentId } = req.params;
       if (!/^\d{1,78}$/.test(agentId)) throw notFound('Agent');
       const id = BigInt(agentId).toString();
 
-      try {
-        if (!(await runtime.trackAgent(id))) throw notFound('Agent');
-      } catch (err) {
-        if (err instanceof ApiHttpError) throw err;
-        req.log.error({ err: (err as Error).name }, 'agent lookup failed');
-        throw chainError('Could not read this agent from the Mirror Node. Try again.');
-      }
+      const lookup = runtime.agentLookup(id);
+      if (lookup === 'missing') throw notFound('Agent');
+      if (lookup === 'cold') await lookUp(req, id);
 
       const view = runtime.view();
       const result = view?.result.agents.find((agent) => agent.agentId === id);
@@ -280,6 +342,7 @@ export function registerReadRoutes(
   app.get<{ Params: { address: string } }>(
     '/api/creators/:address',
     async (req): Promise<CreatorDetail> => {
+      await creatorLimit(req);
       const address = req.params.address.toLowerCase();
       const view = runtime.view();
       if (!view || !/^0x[0-9a-f]{40}$/.test(address)) throw notFound('Creator');

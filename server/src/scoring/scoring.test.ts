@@ -3,11 +3,11 @@ import { keccak256 } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { SCORING_CONFIG as CONFIG } from './config.ts';
 import { classifyReviews, normalizeValue, verifyPayment } from './filter.ts';
-import { confirmMisconduct, countsAgainstCreator, decayedPoints } from './misconduct.ts';
+import { confirmMisconduct, countsAgainstCreator, decayedPoints, nextHalvingAt } from './misconduct.ts';
 import { computeScores, creatorScore, tierFor } from './score.ts';
 import { buildSnapshot, canonicalJson, chunksNeeded, computeInputsHash, epochOf, hasOnlyFiniteScores } from './snapshot.ts';
-import { addDays } from './time.ts';
-import { parsePaymentProof, toMirrorTransactionId, toSdkTransactionId } from './txid.ts';
+import { addDays, fromMillis } from './time.ts';
+import { hashscanTxId, parsePaymentProof, toMirrorTransactionId, toSdkTransactionId } from './txid.ts';
 import type { AgentInput, ReviewInput, ScoringInputs } from './types.ts';
 import { buildWalletBindings, walletDirectory } from './wallets.ts';
 
@@ -197,6 +197,19 @@ describe('transaction IDs', () => {
     expect(parsePaymentProof(hash)).toEqual({ kind: 'eth-hash', key: hash.toLowerCase() });
     expect(parsePaymentProof(undefined)).toBeNull();
     expect(parsePaymentProof({ txId: 'x' })).toBeNull();
+  });
+});
+
+describe('hashscanTxId', () => {
+  const at = '1800000000.000000001';
+  it('keeps a 32-byte 0x hash', () => {
+    const hash = `0x${'aB'.repeat(32)}`;
+    expect(hashscanTxId(hash, at)).toBe(hash);
+  });
+  it('uses the consensus timestamp for anything else', () => {
+    for (const other of ['0.0.5@1700000000.000000001', '0.0.5-1700000000-000000001', `0x${'ab'.repeat(48)}`, `${'ab'.repeat(32)}`, '']) {
+      expect(hashscanTxId(other, at), other).toBe(at);
+    }
   });
 });
 
@@ -548,9 +561,22 @@ describe('misconduct confirmation', () => {
     const afterRevoke = [{ ...fraud(WALLET_B1, 1), revokedAt: at(4) }, fraud(WALLET_C1, 2)];
     const [before] = penalties(confirmed);
     const [after] = penalties(afterRevoke);
-    expect({ ...after, reporters: [] }).toEqual({ ...before, reporters: [] });
+    expect({ ...after, reporters: [], reports: [] }).toEqual({ ...before, reporters: [], reports: [] });
     expect(after!.reporters).toEqual([CREATOR_B, CREATOR_C]);
+    expect(after!.reports.map((report) => report.client)).toEqual([WALLET_B1, WALLET_C1]);
     expect(creatorOf(score(world(afterRevoke), at(5)), CREATOR_A).P).toBeGreaterThan(19);
+  });
+  it('records the reports open at confirmation, in order, and only those', () => {
+    const reports = [fraud(WALLET_B1, 1), fraud(WALLET_B1, 40), fraud(WALLET_B1, 41), fraud(WALLET_C1, 42), fraud(WALLET_D1, 43)];
+    const [penalty] = penalties(reports);
+    expect(penalty!.reports).toEqual(
+      [reports[1]!, reports[2]!, reports[3]!].map(({ client, feedbackIndex, txHash, timestamp }) => ({ client, feedbackIndex, txHash, timestamp })),
+    );
+  });
+  it('leaves a report revoked before confirmation out of the reports', () => {
+    const revoked = { ...fraud(WALLET_B1, 1), revokedAt: at(2) };
+    const [penalty] = penalties([revoked, fraud(WALLET_C1, 3), fraud(WALLET_D1, 4)]);
+    expect(penalty!.reports.map((report) => report.client)).toEqual([WALLET_C1, WALLET_D1]);
   });
   it('keeps a penalty when the confirming report is the one revoked', () => {
     expect(penalties([fraud(WALLET_B1, 1), { ...fraud(WALLET_C1, 2), revokedAt: at(3) }])).toHaveLength(1);
@@ -586,6 +612,41 @@ describe('penalty decay and compromise cut-off', () => {
     expect(countsAgainstCreator(at(1), null)).toBe(true);
     expect(countsAgainstCreator(at(1), at(2))).toBe(true);
     expect(countsAgainstCreator(at(3), at(2))).toBe(false);
+  });
+});
+
+describe('next halving', () => {
+  const confirmed = '1800000000.123456789';
+  const half = CONFIG.penaltyHalfLifeDays;
+
+  it('is one half-life on, until that moment has passed', () => {
+    expect(nextHalvingAt(confirmed, confirmed, CONFIG)).toBe(addDays(confirmed, half));
+    expect(nextHalvingAt(confirmed, addDays(confirmed, half - 1), CONFIG)).toBe(addDays(confirmed, half));
+  });
+  it('moves on at the exact moment of a halving, to the nanosecond', () => {
+    const halving = addDays(confirmed, half);
+    expect(nextHalvingAt(confirmed, '1815552000.123456788', CONFIG)).toBe(halving);
+    expect(nextHalvingAt(confirmed, halving, CONFIG)).toBe(addDays(confirmed, 2 * half));
+  });
+  it('skips whole half-lives that have passed', () => {
+    expect(nextHalvingAt(confirmed, addDays(confirmed, 3 * half + 1), CONFIG)).toBe(addDays(confirmed, 4 * half));
+  });
+  it('is the first half-life when the clock is behind the chain', () => {
+    expect(nextHalvingAt(confirmed, '1700000000.000000000', CONFIG)).toBe(addDays(confirmed, half));
+  });
+  it('uses the configured half-life', () => {
+    expect(nextHalvingAt(confirmed, confirmed, { ...CONFIG, penaltyHalfLifeDays: 10 })).toBe(addDays(confirmed, 10));
+  });
+  it('agrees with the decay: the points halve at that moment', () => {
+    const next = nextHalvingAt(confirmed, addDays(confirmed, 1), CONFIG);
+    expect(decayedPoints(20, confirmed, next, CONFIG)).toBe(10);
+  });
+});
+
+describe('fromMillis', () => {
+  it('keeps milliseconds in the nanos, padded', () => {
+    expect(fromMillis(1_800_000_000_007)).toBe('1800000000.007000000');
+    expect(fromMillis(1_800_000_000_000)).toBe('1800000000.000000000');
   });
 });
 

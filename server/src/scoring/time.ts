@@ -18,6 +18,11 @@ export function fromSeconds(seconds: number): ConsensusTimestamp {
   return `${Math.floor(seconds)}.000000000`;
 }
 
+export function fromMillis(ms: number): ConsensusTimestamp {
+  const whole = Math.floor(ms);
+  return `${Math.floor(whole / 1000)}.${String((whole % 1000) * 1_000_000).padStart(9, '0')}`;
+}
+
 export function addDays(ts: ConsensusTimestamp, days: number): ConsensusTimestamp {
   const nanos = toNanos(ts) + BigInt(Math.round(days * SECONDS_PER_DAY)) * 1_000_000_000n;
   return `${nanos / 1_000_000_000n}.${String(nanos % 1_000_000_000n).padStart(9, '0')}`;

@@ -97,6 +97,8 @@ export interface ConfirmedPenalty {
   firstReportAt: ConsensusTimestamp;
   confirmedAt: ConsensusTimestamp;
   reporters: Address[];
+  /** The reports open at the confirmation, in consensus order: what the penalty rests on. */
+  reports: Pick<ClassifiedReview, 'client' | 'feedbackIndex' | 'txHash' | 'timestamp'>[];
   /** False when the first report came after the agent's compromise report. */
   countsAgainstCreator: boolean;
   /** After decay, at the scoring time. */

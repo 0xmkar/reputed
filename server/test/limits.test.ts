@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { harness } from './helpers.ts';
-import { createPublishGate } from '../src/routes/rateLimits.ts';
+import { createLookupGate, createPublishGate } from '../src/routes/rateLimits.ts';
 import { ApiHttpError } from '../src/errors.ts';
+import { MirrorClient } from '../src/indexer/mirror.ts';
+import { ScorerRuntime } from '../src/indexer/runtime.ts';
+import { loadScorerSettings } from '../src/indexer/settings.ts';
+import { Store } from '../src/indexer/store.ts';
 
 const LIMIT = { max: 3, timeWindow: 60_000 };
 const NGROK_AGENT = '127.0.0.1';
@@ -82,6 +86,63 @@ describe('rate limits over a real socket', () => {
     } finally {
       await h.app.close();
     }
+  });
+});
+
+describe('read routes through buildApp', () => {
+  const scorer = () =>
+    new ScorerRuntime({
+      settings: loadScorerSettings({}),
+      store: new Store(':memory:'),
+      mirror: new MirrorClient({ baseUrl: 'https://mirror.test' }),
+    });
+
+  it('applies the configured limits, behind the same proxy rules as the write routes', async () => {
+    const h = await harness({
+      readRoutes: true,
+      scorer: scorer(),
+      trustProxy: [NGROK_AGENT],
+      rateLimits: { agentListByIp: LIMIT },
+    });
+    const list = (forwardedFor: string) =>
+      h.app.inject({
+        method: 'GET',
+        url: '/api/agents',
+        remoteAddress: NGROK_AGENT,
+        headers: { 'x-forwarded-for': forwardedFor },
+      });
+
+    const codes = [];
+    for (let i = 0; i < 4; i++) codes.push((await list(`10.9.0.${i}, 203.0.113.7`)).statusCode);
+    expect(codes).toEqual([200, 200, 200, 429]);
+    expect((await list('203.0.113.8')).statusCode).toBe(200);
+  });
+});
+
+describe('createLookupGate', () => {
+  it('refuses with a 503 once the window is spent, and refills', () => {
+    let now = 0;
+    const gate = createLookupGate({ max: 1, timeWindow: 60_000 }, () => now);
+    gate.acquire()();
+    let refused: unknown;
+    try {
+      gate.acquire();
+    } catch (err) {
+      refused = err;
+    }
+    expect(refused).toBeInstanceOf(ApiHttpError);
+    expect(refused).toMatchObject({ statusCode: 503, code: 'RATE_LIMITED', retryAfterSeconds: 60 });
+    now = 60_000;
+    expect(() => gate.acquire()).not.toThrow();
+  });
+
+  it('allows two at once, and a third after one ends', () => {
+    const gate = createLookupGate({ max: 100, timeWindow: 60_000 });
+    const first = gate.acquire();
+    gate.acquire();
+    expect(() => gate.acquire()).toThrow(ApiHttpError);
+    first();
+    expect(() => gate.acquire()).not.toThrow();
   });
 });
 

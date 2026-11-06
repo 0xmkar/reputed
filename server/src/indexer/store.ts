@@ -14,6 +14,7 @@ DROP TABLE IF EXISTS events;
 DROP TABLE IF EXISTS review_files;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS account_misses;
 DROP TABLE IF EXISTS agent_files;
 DROP TABLE IF EXISTS tracked_agents;
 DROP TABLE IF EXISTS snapshots;
@@ -45,6 +46,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   evm TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
   created_ts TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_misses (
+  evm TEXT PRIMARY KEY,
+  fetched_through TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_files (
   uri TEXT PRIMARY KEY,
@@ -272,6 +277,21 @@ export class Store implements Facts {
     this.db
       .prepare('INSERT OR REPLACE INTO accounts (evm, account_id, created_ts) VALUES (?, ?, ?)')
       .run(evm, record.accountId, record.createdAt);
+    this.db.prepare('DELETE FROM account_misses WHERE evm = ?').run(evm);
+  }
+
+  /** How far a lookup has proved this wallet has no account. Only the enrichment pass reads this. */
+  accountMiss(evm: string): ConsensusTimestamp | undefined {
+    const row = this.db
+      .prepare('SELECT fetched_through FROM account_misses WHERE evm = ?')
+      .get(evm) as { fetched_through: string } | undefined;
+    return row?.fetched_through;
+  }
+
+  saveAccountMiss(evm: string, fetchedThrough: ConsensusTimestamp): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO account_misses (evm, fetched_through) VALUES (?, ?)')
+      .run(evm, fetchedThrough);
   }
 
   agentFile(uri: string): { body: string | null; fetchedAt: number } | undefined {
@@ -294,8 +314,15 @@ export class Store implements Facts {
     return rows.map((row) => row.agent_id);
   }
 
-  trackAgent(agentId: string): void {
-    this.db.prepare('INSERT OR IGNORE INTO tracked_agents (agent_id) VALUES (?)').run(agentId);
+  /** Keeps the newest `limit`. A visit must not grow what every sync goes on to cover. */
+  trackAgent(agentId: string, limit: number): void {
+    this.db.prepare('INSERT OR REPLACE INTO tracked_agents (agent_id) VALUES (?)').run(agentId);
+    this.db
+      .prepare(
+        `DELETE FROM tracked_agents WHERE rowid NOT IN
+           (SELECT rowid FROM tracked_agents ORDER BY rowid DESC LIMIT ?)`,
+      )
+      .run(limit);
   }
 
   saveSnapshot(snapshot: Snapshot, sequenceNumber: number | null): void {

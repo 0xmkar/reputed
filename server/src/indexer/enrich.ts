@@ -1,5 +1,5 @@
 import { parseReviewFile } from '../scoring/filter.ts';
-import type { ConsensusTimestamp } from '../scoring/time.ts';
+import { compareConsensus, type ConsensusTimestamp } from '../scoring/time.ts';
 import { parsePaymentProof } from '../scoring/txid.ts';
 import { loadAgentFile } from './agentFile.ts';
 import { feedbackKey, type ChainState, type FeedbackEvent } from './fold.ts';
@@ -20,10 +20,17 @@ const AGENT_FILE_RETRY_MS = 3_600_000;
 export interface EnrichOptions {
   /** A consensus time the mirror had fully ingested before any lookup here started. */
   asOf: ConsensusTimestamp;
+  /** The newest epoch boundary at or before asOf. See accountIsSettled. */
+  epochBoundary: ConsensusTimestamp;
   reviewsTopicId: string;
   ipfsGateway: string;
   fetch?: typeof fetch;
   now?: () => number;
+  /**
+   * How many uncached reviews and agent files to fetch in this pass. Reviews past it stay
+   * unresolved for a later pass. Unset for linked agents, which an epoch cannot publish without.
+   */
+  maxLookups?: number;
 }
 
 /**
@@ -57,16 +64,51 @@ async function enrichReview(
   }
 }
 
+/**
+ * True when this wallet needs no lookup. A miss only proves absence up to its lookup, and it is what
+ * stops a wallet with no account from being read again on every sync, ahead of every later review.
+ * It lasts to the next epoch boundary rather than for a wall-clock period, because the inputs hash
+ * covers accounts: an epoch must see any account created before it ended (T5.8), and the first sync
+ * past the boundary re-reads the miss before that epoch is built.
+ */
+function accountIsSettled(
+  store: Store,
+  wallet: string,
+  epochBoundary: ConsensusTimestamp,
+): boolean {
+  if (store.account(wallet)) return true;
+  const miss = store.accountMiss(wallet);
+  return miss !== undefined && compareConsensus(miss, epochBoundary) >= 0;
+}
+
 async function resolveAccounts(
   store: Store,
   mirror: MirrorClient,
   wallets: string[],
+  { asOf, epochBoundary }: EnrichOptions,
 ): Promise<void> {
   for (const wallet of wallets) {
-    if (store.account(wallet)) continue;
+    if (accountIsSettled(store, wallet, epochBoundary)) continue;
     const record = await mirror.account(wallet);
     if (record) store.saveAccount(wallet, record);
+    else store.saveAccountMiss(wallet, asOf);
   }
+}
+
+/** True when enriching this review would reach the mirror. */
+function needsLookup(
+  store: Store,
+  state: ChainState,
+  feedback: FeedbackEvent,
+  { reviewsTopicId, epochBoundary }: EnrichOptions,
+): boolean {
+  const { payment, complete } = factsForReview(feedback, store, reviewsTopicId);
+  if (!complete) return true;
+  if (!payment) return false;
+  const agent = agentInput(state, feedback.agentId);
+  return walletsForPayment(feedback, payment, agent).some(
+    (wallet) => !accountIsSettled(store, wallet, epochBoundary),
+  );
 }
 
 /**
@@ -80,29 +122,42 @@ export async function enrichState(
   scope: ReadonlySet<string>,
   options: EnrichOptions,
 ): Promise<Set<string>> {
-  const unresolved = new Set<string>();
-  for (const feedback of reviewsInScope(state, scope)) {
-    try {
-      await enrichReview(store, mirror, feedback, options);
-      const { payment } = factsForReview(feedback, store, options.reviewsTopicId);
-      if (payment) {
-        const agent = agentInput(state, feedback.agentId);
-        await resolveAccounts(store, mirror, walletsForPayment(feedback, payment, agent));
-      }
-    } catch (err) {
-      if (!(err instanceof MirrorError)) throw err;
-      await mirror.latestConsensusTimestamp();
-      unresolved.add(feedbackKey(feedback.agentId, feedback.client, feedback.feedbackIndex));
-    }
-  }
+  let lookupsLeft = options.maxLookups ?? Number.POSITIVE_INFINITY;
 
+  // Before the reviews, so an agent with more reviews than the limit still gets its name and image.
   const now = (options.now ?? Date.now)();
   for (const agentId of scope) {
     const uri = state.identities.get(agentId)?.agentUri;
     if (!uri) continue;
     const cached = store.agentFile(uri);
     if (cached && (cached.body !== null || now - cached.fetchedAt < AGENT_FILE_RETRY_MS)) continue;
+    if (lookupsLeft <= 0) break;
+    lookupsLeft -= 1;
     store.saveAgentFile(uri, await loadAgentFile(uri, options), now);
+  }
+
+  const unresolved = new Set<string>();
+  for (const feedback of reviewsInScope(state, scope)) {
+    const key = feedbackKey(feedback.agentId, feedback.client, feedback.feedbackIndex);
+    if (needsLookup(store, state, feedback, options)) {
+      if (lookupsLeft <= 0) {
+        unresolved.add(key);
+        continue;
+      }
+      lookupsLeft -= 1;
+    }
+    try {
+      await enrichReview(store, mirror, feedback, options);
+      const { payment } = factsForReview(feedback, store, options.reviewsTopicId);
+      if (payment) {
+        const agent = agentInput(state, feedback.agentId);
+        await resolveAccounts(store, mirror, walletsForPayment(feedback, payment, agent), options);
+      }
+    } catch (err) {
+      if (!(err instanceof MirrorError)) throw err;
+      await mirror.latestConsensusTimestamp();
+      unresolved.add(key);
+    }
   }
   return unresolved;
 }

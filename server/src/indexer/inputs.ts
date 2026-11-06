@@ -38,6 +38,23 @@ export function scoringScope(state: ChainState, extraAgentIds: Iterable<string> 
   return new Set([...state.links.keys(), ...extraAgentIds]);
 }
 
+/**
+ * Agents a verified creator minted but nobody has linked, however early they were minted. These
+ * come from the identity logs every sync already ingests, so finding them costs no Mirror request.
+ * They belong to the live view only: snapshots hold linked agents.
+ *
+ * Only the mint counts. A transfer needs no consent from the receiver, so holding an agent would let
+ * anyone with no World ID push agents into this list. A creator who received one can still link it.
+ */
+export function unlinkedCreatorAgents(state: ChainState): string[] {
+  return [...state.identities.values()]
+    .filter(({ agentId, ownerHistory }) => {
+      const minter = ownerHistory[0]?.owner;
+      return !state.links.has(agentId) && !!minter && state.creators.has(minter);
+    })
+    .map(({ agentId }) => agentId);
+}
+
 /** A found file cannot change. A miss only proves absence up to the time of the lookup. */
 export function fileIsCurrent(
   record: ReviewFileRecord | undefined,

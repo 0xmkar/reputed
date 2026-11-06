@@ -243,3 +243,23 @@ details summary { cursor: pointer; }
 .stale-chip { display: inline-block; margin-top: 16px; }
 
 .badge-danger { background: var(--error-bg); color: var(--error); }
+
+/* ---- Narrow screens (checked by reading at 390px; see docs/05-work-split.md T6.11) ---- */
+/* Long names, comments and issuers must wrap instead of pushing the page wider. */
+.agent-hero-text h1, .agent-desc, .review-comment, .review-response p, .credential-meta dd { overflow-wrap: anywhere; }
+.credential-meta { flex-wrap: wrap; gap: 8px 24px; }
+
+@media (max-width: 640px) {
+  /* The wallet button can wrap onto its own line at the left, so a right-anchored menu would run off-screen.
+     Anchor the menu to the header instead and let it span the screen. */
+  .header { position: relative; }
+  .wallet { position: static; }
+  .menu { left: 16px; right: 16px; min-width: 0; }
+}
+
+/* Touch screens: bigger targets for the small controls. */
+@media (pointer: coarse) {
+  .icon-btn { padding: 10px; }
+  .chip-toggle { padding: 8px 14px; }
+  .menu button, .menu a { padding: 12px 14px; }
+}

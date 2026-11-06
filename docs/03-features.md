@@ -4,7 +4,7 @@ Nov 6, 2026
 
 ## How to read this list
 
-There are 58 features in 8 groups; 30 are needed for the hackathon demo (MVP).
+There are 60 features in 8 groups; 30 are needed for the hackathon demo (MVP).
 
 - **ID:** group prefix plus a number, e.g. CR-2. Use it in tickets and test reports.
 - **Priority:** MVP = needed for the demo; Next = right after the demo; Later = before mainnet, or nice to have.
@@ -28,7 +28,7 @@ These features make one verified human equal exactly one creator. 4 of 7 are MVP
 
 ## Agent onboarding
 
-These features take a verified creator from an idea to a registered, linked, human-backed agent. 7 of 10 are MVP.
+These features take a verified creator from an idea to a registered, linked, human-backed agent. 7 of 12 are MVP.
 
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
@@ -42,6 +42,8 @@ These features take a verified creator from an idea to a registered, linked, hum
 | AG-8 | Separate agent wallet | `setAgentWallet` with an EIP-712 signature from the agent's own account. After linking, `syncAgentWallet` backs the new wallet and issues it a credential | Next | 3 |
 | AG-9 | Edit agent file | Gets a new URI for the edited file and calls `setAgentURI` | Next | 6 |
 | AG-10 | HCS-14 UAID and HCS-11 profile | Makes the agent discoverable by HCS-10 tools | Later | 3 |
+| AG-11 | API keys | A verified creator makes a key in the browser on `/dashboard` and authorizes its address with `authorizeGrant` (expiry, most agents). Revoke any time. The Reputed server never sees the key | Next | 6 |
+| AG-12 | Headless onboarding (`@reputed/agent-kit`) | `Reputed.connect({ client, apiKey, agent })` registers a Hedera Agent Kit agent, links it with `linkAgentWithGrant`, receives its credential and returns a plugin with reputation tools. Resumable after a crash | Next | 7 |
 
 ## Reviews and reputation
 

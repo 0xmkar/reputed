@@ -1,0 +1,25 @@
+{
+  "name": "@reputed/example-agent-kit-langchain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Hedera Agent Kit + LangChain agent with Reputed added in one call.",
+  "scripts": {
+    "start": "tsx --env-file=.env agent.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hashgraph/hedera-agent-kit": "^4.2.0",
+    "@hashgraph/hedera-agent-kit-langchain": "^2.1.0",
+    "@hiero-ledger/sdk": "^2.90.1",
+    "@langchain/core": "^1.2.3",
+    "@langchain/openai": "^1.8.0",
+    "@reputed/agent-kit": "workspace:^",
+    "langchain": "^1.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

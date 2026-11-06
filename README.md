@@ -8,7 +8,7 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 | --- | --- |
 | [4-Hour MVP Plan](docs/01-4-hour-mvp-plan.md) | What ships in 4 hours, hour-by-hour plan across 3 tracks, 15 manual tests, demo script, cut list |
 | [Phased Implementation Plan](docs/02-implementation-plan.md) | The full build in 9 phases (0–8), each with tasks and manual tests; risks and open decisions |
-| [Features List](docs/03-features.md) | 58 features in 8 groups, with IDs, priority (MVP / Next / Later) and phase |
+| [Features List](docs/03-features.md) | 60 features in 8 groups, with IDs, priority (MVP / Next / Later) and phase |
 | [UI Elements](docs/04-ui-elements.md) | Screen map, global elements, 6 screens, shared components and states |
 | [Work Split](docs/05-work-split.md) | Who owns each phase, Swapnil's task list, and the rules for working in parallel |
 | [Testnet Runbook](docs/06-testnet-runbook.md) | The ordered steps from a funded operator to a live server, and which plan tests each step unlocks |
@@ -22,6 +22,20 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 - **HTS** for the non-transferable "Human-backed" credential NFT
 - **HCS** for review files and score snapshots
 
+## Repo layout
+
+A pnpm workspace run by Turborepo (`pnpm build`, `pnpm typecheck`, `pnpm test`).
+
+| Path | What it is |
+| --- | --- |
+| `apps/web` | Next.js app: explorer, verify, onboard wizard, review modal and the API key dashboard |
+| `apps/server` | Fastify server: World ID verifier, indexer, scorer and the read API |
+| `packages/contracts` | `CreatorRegistry` (Foundry) and its deploy scripts |
+| `packages/shared` | Types, ABIs, constants, the agent file builder and the API key helpers, used by every other package |
+| `packages/sdk` | Read client, counterparty gate and MCP server |
+| `packages/agent-kit` | `@reputed/agent-kit`: wrap a Hedera Agent Kit agent with one API key and it onboards itself ([README](packages/agent-kit/README.md)) |
+| `examples/agent-kit-langchain` | A LangChain agent using it |
+
 ## Run it
 
 You need Node 22.18 or newer and pnpm 9.4 (pinned in `package.json`).
@@ -29,7 +43,7 @@ You need Node 22.18 or newer and pnpm 9.4 (pinned in `package.json`).
 ```sh
 pnpm install
 pnpm typecheck   # every package
-pnpm test        # every package that has tests (currently the SDK)
+pnpm test        # every package that has tests
 ```
 
 ### Web app (`apps/web`)

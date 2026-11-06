@@ -1,12 +1,16 @@
 import {
+  HEDERA_TESTNET,
   hashscan,
   type Address,
   type AgentDetail,
   type AgentListResponse,
   type AgentStatus,
   type AgentSummary,
+  type ConfigResponse,
   type Credential,
   type CreatorDetail,
+  type CreatorGrantsResponse,
+  type GrantSummary,
   type Review,
   type ReviewResponse,
 } from '@reputed/shared';
@@ -14,7 +18,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ApiHttpError, badRequest, chainError } from '../errors.ts';
 import type { AgentProfile } from '../indexer/agentFile.ts';
-import { feedbackKey } from '../indexer/fold.ts';
+import { feedbackKey, type GrantRecord } from '../indexer/fold.ts';
 import { agentInput, unlinkedCreatorAgents } from '../indexer/inputs.ts';
 import type { LiveView, ScorerRuntime } from '../indexer/runtime.ts';
 import {
@@ -52,7 +56,7 @@ function currentWallet(view: LiveView, agentId: string): Address | null {
 function operatorChanged(view: LiveView, agentId: string): boolean {
   const link = view.state.links.get(agentId);
   const owner = view.state.identities.get(agentId)?.owner;
-  return Boolean(link && owner && owner !== link.creator);
+  return Boolean(link && owner && owner !== link.owner);
 }
 
 /** A compromise report wins over a transfer: the SDK's payment gate stops on this value. */
@@ -283,6 +287,29 @@ function creatorDetail(runtime: ScorerRuntime, view: LiveView, address: Address)
   };
 }
 
+const toGrantSummary = (
+  runtime: ScorerRuntime,
+  view: LiveView,
+  grant: GrantRecord,
+): GrantSummary => {
+  const linked = [...view.state.links.values()].filter((link) => link.grantKey === grant.grantKey);
+  const results = linked
+    .map((link) => view.result.agents.find((agent) => agent.agentId === link.agentId))
+    .filter((result): result is AgentResult => result !== undefined);
+  return {
+    grantKey: grant.grantKey,
+    creator: grant.creator,
+    authorizedAt: toIso(grant.authorizedAt),
+    expiresAt: new Date(grant.expiresAt * 1000).toISOString(),
+    maxAgents: grant.maxAgents,
+    used: linked.length,
+    revoked: grant.revokedAt !== null,
+    // Judged on consensus time, like everything else in the view, so it can be replayed.
+    expired: grant.expiresAt <= Number(view.asOf.split('.')[0]),
+    agents: results.map((result) => toSummary(runtime, view, result, profileOf(runtime, view, result.agentId))),
+  };
+};
+
 export function registerReadRoutes(
   app: FastifyInstance,
   runtime: ScorerRuntime,
@@ -349,4 +376,32 @@ export function registerReadRoutes(
       return creatorDetail(runtime, view, address as Address);
     },
   );
+
+  app.get<{ Params: { address: string } }>(
+    '/api/creators/:address/grants',
+    async (req): Promise<CreatorGrantsResponse> => {
+      await creatorLimit(req);
+      const address = req.params.address.toLowerCase();
+      const view = runtime.view();
+      if (!view || !/^0x[0-9a-f]{40}$/.test(address)) throw notFound('Creator');
+      const grants = [...view.state.grants.values()]
+        .filter((grant) => grant.creator === address)
+        .map((grant) => toGrantSummary(runtime, view, grant));
+      return { grants };
+    },
+  );
+
+  const configLimit = limiter(app, rateLimits.agentListByIp, byIp('config'));
+  app.get('/api/config', async (req): Promise<ConfigResponse> => {
+    await configLimit(req);
+    const { identityRegistry, creatorRegistry, credentialTokenId, mirrorNode } = runtime.settings;
+    return {
+      network: 'hedera-testnet',
+      chainId: HEDERA_TESTNET.id,
+      identityRegistry: identityRegistry.toLowerCase() as Address,
+      creatorRegistry: (creatorRegistry?.toLowerCase() as Address | undefined) ?? null,
+      credentialTokenId,
+      mirrorNode,
+    };
+  });
 }

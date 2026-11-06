@@ -144,6 +144,41 @@ export interface CreatorDetail {
   agents: AgentSummary[];
 }
 
+/** One API key a creator authorized, as the dashboard and the SDK see it. */
+export interface GrantSummary {
+  /** The address derived from the API key. The key itself never reaches the server. */
+  grantKey: Address;
+  creator: Address;
+  authorizedAt: string;
+  expiresAt: string;
+  maxAgents: number;
+  /** Agents this key has linked so far. */
+  used: number;
+  revoked: boolean;
+  /** True once `expiresAt` has passed. */
+  expired: boolean;
+  agents: AgentSummary[];
+}
+
+export interface CreatorGrantsResponse {
+  grants: GrantSummary[];
+}
+
+/**
+ * What a client needs to talk to the deployment: the SDK reads it, so redeploying the contracts does
+ * not mean publishing a new SDK.
+ */
+export interface ConfigResponse {
+  network: 'hedera-testnet';
+  chainId: number;
+  identityRegistry: Address;
+  /** Null until CreatorRegistry is deployed and configured on the server. */
+  creatorRegistry: Address | null;
+  /** The credential collection as 0.0.x, or null when not configured. */
+  credentialTokenId: string | null;
+  mirrorNode: string;
+}
+
 export interface AgentQuery {
   q?: string;
   /** true shows only human-backed agents. false or missing applies no filter. */

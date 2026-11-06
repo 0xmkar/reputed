@@ -25,6 +25,11 @@ export interface AgentInput {
   agentId: string;
   /** Null for an agent that is not linked to a verified creator. */
   creator: Address | null;
+  /**
+   * Who had to own the agent NFT for the link to count. Unset means the creator, which is how
+   * snapshots and tests written before grants describe a link.
+   */
+  linkedOwner?: Address | null;
   /** The wallets in AgentLinked and AgentWalletSynced: the only ones CreatorRegistry vouches for. */
   vouchedWallets: VouchedWalletStart[];
   compromisedAt: ConsensusTimestamp | null;

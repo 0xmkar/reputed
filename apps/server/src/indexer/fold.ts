@@ -24,9 +24,27 @@ export interface VouchedWallet {
 export interface AgentLink {
   agentId: string;
   creator: Address;
+  /**
+   * Who owned the agent NFT when it was linked: the creator for linkAgent, the agent's own account
+   * for linkAgentWithGrant. The link only counts while the NFT stays with this address.
+   */
+  owner: Address;
+  /** The API key's grant address when a grant did the link. */
+  grantKey: Address | null;
   linkedAt: ConsensusTimestamp;
   /** The link-time wallet first, then each one synced after it. */
   wallets: VouchedWallet[];
+}
+
+/** CreatorRegistry.authorizeGrant: a key the creator lets link agents. */
+export interface GrantRecord {
+  grantKey: Address;
+  creator: Address;
+  /** Unix seconds. */
+  expiresAt: number;
+  maxAgents: number;
+  authorizedAt: ConsensusTimestamp;
+  revokedAt: ConsensusTimestamp | null;
 }
 
 export interface FeedbackEvent {
@@ -64,6 +82,7 @@ export interface ChainState {
   creators: Map<Address, { wallet: Address; registeredAt: ConsensusTimestamp }>;
   identities: Map<string, AgentIdentity>;
   links: Map<string, AgentLink>;
+  grants: Map<Address, GrantRecord>;
   compromisedAt: Map<string, ConsensusTimestamp>;
   feedback: FeedbackEvent[];
   credentials: CredentialEvent[];
@@ -101,6 +120,7 @@ export function foldEvents(events: ChainEvent[]): ChainState {
     creators: new Map(),
     identities: new Map(),
     links: new Map(),
+    grants: new Map(),
     compromisedAt: new Map(),
     feedback: [],
     credentials: [],
@@ -151,6 +171,8 @@ export function foldEvents(events: ChainEvent[]): ChainState {
         state.links.set(agentId, {
           agentId,
           creator: str('creator') as Address,
+          owner: str('creator') as Address,
+          grantKey: null,
           linkedAt: timestamp,
           wallets: [
             {
@@ -160,6 +182,34 @@ export function foldEvents(events: ChainEvent[]): ChainState {
             },
           ],
         });
+        break;
+      }
+      case 'AgentLinkedByGrant': {
+        // Emitted right after AgentLinked in the same transaction.
+        const link = state.links.get(str('agentId'));
+        if (link && link.grantKey === null) {
+          link.owner = str('owner') as Address;
+          link.grantKey = str('grantKey') as Address;
+        }
+        break;
+      }
+      case 'GrantAuthorized': {
+        const grantKey = str('grantKey') as Address;
+        if (!state.grants.has(grantKey)) {
+          state.grants.set(grantKey, {
+            grantKey,
+            creator: str('creator') as Address,
+            expiresAt: Number(args['expiresAt']),
+            maxAgents: Number(args['maxAgents']),
+            authorizedAt: timestamp,
+            revokedAt: null,
+          });
+        }
+        break;
+      }
+      case 'GrantRevoked': {
+        const grant = state.grants.get(str('grantKey') as Address);
+        if (grant && grant.revokedAt === null) grant.revokedAt = timestamp;
         break;
       }
       case 'AgentWalletSynced':

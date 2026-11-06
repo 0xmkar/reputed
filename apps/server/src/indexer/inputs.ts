@@ -23,6 +23,8 @@ export function agentInput(state: ChainState, agentId: string): AgentInput {
   return {
     agentId,
     creator: link?.creator ?? null,
+    // Only when it differs from the creator, so inputs of classic links hash as they did before grants.
+    ...(link && link.owner !== link.creator ? { linkedOwner: link.owner } : {}),
     vouchedWallets: link?.wallets.map(({ wallet, from }) => ({ wallet, from })) ?? [],
     compromisedAt: state.compromisedAt.get(agentId) ?? null,
     walletHistory: id?.walletHistory ?? [],

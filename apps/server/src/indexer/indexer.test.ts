@@ -2271,3 +2271,89 @@ describe('read route limits', () => {
     expect((await get('/api/agents/9')).status).toBe(200);
   });
 });
+
+describe('agents linked with a grant key', () => {
+  const AGENT = addr(0xc5);
+  const GRANT_KEY = addr(0x6a);
+  const FAR_FUTURE = BigInt(BASE + 90 * 86_400);
+
+  function withGrantAgent(fake = seeded(), expiresAt = FAR_FUTURE): FakeMirror {
+    fake.addAccount(AGENT);
+    fake.logs.get(IDENTITY)!.push(...mint(5n, AGENT, BASE - 700, 'Headless Bot'));
+    fake.logs.get(REGISTRY)!.push(
+      registryLog('GrantAuthorized', { creator: CREATOR_A, grantKey: GRANT_KEY, expiresAt, maxAgents: 3 }, ts(BASE - 800)),
+      registryLog('CredentialIssued', { holder: AGENT, serial: 4n }, ts(BASE - 690)),
+      registryLog('AgentLinked', { agentId: 5n, creator: CREATOR_A, agentWallet: AGENT, serial: 4n }, ts(BASE - 690)),
+      registryLog('AgentLinkedByGrant', { agentId: 5n, creator: CREATOR_A, grantKey: GRANT_KEY, owner: AGENT }, ts(BASE - 690)),
+    );
+    return fake;
+  }
+
+  it('is human-backed and active while the agent keeps its own NFT', async () => {
+    const { get } = await api(withGrantAgent());
+    expect((await get('/api/agents/5')).body).toMatchObject({
+      creator: CREATOR_A,
+      humanBacked: true,
+      status: 'active',
+      operatorChanged: false,
+    });
+  });
+
+  it('is operator-changed and no longer human-backed once the NFT moves', async () => {
+    const fake = withGrantAgent();
+    fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: AGENT, to: STRANGER, tokenId: 5n }, ts(BASE + 1)));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/5')).body).toMatchObject({ humanBacked: false, status: 'operator-changed' });
+  });
+
+  it('is compromised after the creator reports it', async () => {
+    const fake = withGrantAgent();
+    fake.logs.get(REGISTRY)!.push(registryLog('AgentCompromised', { agentId: 5n, creator: CREATOR_A, timestamp: BigInt(BASE + 2) }, ts(BASE + 2)));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/5')).body).toMatchObject({ humanBacked: false, status: 'compromised' });
+  });
+
+  it('lists a creator’s grants with what each one linked', async () => {
+    const { get } = await api(withGrantAgent());
+    const { status, body } = await get(`/api/creators/${CREATOR_A}/grants`);
+    expect(status).toBe(200);
+    expect(body.grants).toHaveLength(1);
+    expect(body.grants[0]).toMatchObject({
+      grantKey: GRANT_KEY,
+      creator: CREATOR_A,
+      maxAgents: 3,
+      used: 1,
+      revoked: false,
+      expired: false,
+    });
+    expect(body.grants[0].agents.map((agent: { agentId: string }) => agent.agentId)).toEqual(['5']);
+    expect(body.grants[0].expiresAt).toBe(new Date(Number(FAR_FUTURE) * 1000).toISOString());
+  });
+
+  it('shows another creator no grants, and a revoked or expired one as such', async () => {
+    const fake = withGrantAgent(seeded(), BigInt(BASE - 100));
+    fake.logs.get(REGISTRY)!.push(registryLog('GrantRevoked', { creator: CREATOR_A, grantKey: GRANT_KEY }, ts(BASE + 5)));
+    const { get } = await api(fake);
+    expect((await get(`/api/creators/${CREATOR_B}/grants`)).body.grants).toEqual([]);
+    expect((await get(`/api/creators/${CREATOR_A}/grants`)).body.grants[0]).toMatchObject({ revoked: true, expired: true, used: 1 });
+  });
+
+  it('answers 404 for an address that is not a creator address', async () => {
+    const { get } = await api(withGrantAgent());
+    expect((await get('/api/creators/nope/grants')).status).toBe(404);
+  });
+});
+
+describe('GET /api/config', () => {
+  it('tells a client which contracts to use', async () => {
+    const { get } = await api();
+    expect((await get('/api/config')).body).toEqual({
+      network: 'hedera-testnet',
+      chainId: 296,
+      identityRegistry: IDENTITY,
+      creatorRegistry: REGISTRY,
+      credentialTokenId: '0.0.700',
+      mirrorNode: 'https://mirror.test',
+    });
+  });
+});

@@ -48,7 +48,8 @@ export function walletVoids(agents: AgentInput[]): Map<Address, ConsensusTimesta
  * Who stood behind which wallet, and when: CreatorRegistry.isHumanBacked replayed over time, since
  * the contract only answers for now and a review must be judged as of its own consensus time.
  * Like the contract it fails closed. An agent wallet binds only once it is vouched for, while it
- * is in the agent's wallet slot and the creator owns the NFT, and until a compromise report on any
+ * is in the agent's wallet slot and the NFT is still with whoever it was linked from (the creator, or
+ * the agent's own account for a grant link), and until a compromise report on any
  * agent recorded on that wallet. Creator wallets are exempt from that report, as in the contract.
  */
 export function buildWalletBindings(
@@ -66,6 +67,7 @@ export function buildWalletBindings(
 
   for (const agent of agents) {
     const { creator, vouchedWallets, walletHistory } = agent;
+    const linkedOwner = agent.linkedOwner ?? creator;
     if (!creator) continue;
 
     for (const { wallet, from: vouchedAt } of vouchedWallets) {
@@ -74,7 +76,7 @@ export function buildWalletBindings(
         const from = latest(period.from, vouchedAt);
         const to = earliest(walletHistory[index + 1]?.from ?? null, voids.get(wallet) ?? null);
         if (to !== null && compareConsensus(to, from) <= 0) return;
-        if (ownerAt(agent, from) !== creator) return;
+        if (ownerAt(agent, from) !== linkedOwner) return;
         bindings.push({ wallet, creator, from, to, kind: 'agent' });
       });
     }

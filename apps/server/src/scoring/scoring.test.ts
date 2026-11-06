@@ -412,6 +412,25 @@ describe('wallet to creator mapping', () => {
     expect(directory.creatorAt(WALLET_A2, at(3.5))).toBeNull();
     expect(directory.creatorAt(WALLET_A2, at(4.5))).toBe(CREATOR_A);
   });
+  it('backs a grant-linked agent while its own account holds the NFT, and not after a sale', () => {
+    const linked = (ownerHistory: AgentInput['ownerHistory'], walletHistory: AgentInput['walletHistory'] = [{ wallet: WALLET_A1, from: T0 }]) =>
+      directoryFor([agent('1', CREATOR_A, WALLET_A1, { linkedOwner: WALLET_A1, ownerHistory, walletHistory })]);
+
+    const kept = linked([{ owner: WALLET_A1, from: T0 }]);
+    expect(kept.creatorAt(WALLET_A1, at(1))).toBe(CREATOR_A);
+
+    // A transfer clears the agent wallet on the Identity Registry, which is what ends the binding.
+    const sold = linked(
+      [{ owner: WALLET_A1, from: T0 }, { owner: CREATOR_B, from: at(1) }],
+      [{ wallet: WALLET_A1, from: T0 }, { wallet: null, from: at(1) }],
+    );
+    expect(sold.creatorAt(WALLET_A1, at(0.5))).toBe(CREATOR_A);
+    expect(sold.creatorAt(WALLET_A1, at(2))).toBeNull();
+
+    // An NFT held by the creator is not what a grant link vouched for.
+    const wrongHolder = linked([{ owner: CREATOR_A, from: T0 }]);
+    expect(wrongHolder.creatorAt(WALLET_A1, at(1))).toBeNull();
+  });
   it('voids a shared wallet for every agent on it, as of the report', () => {
     const reported = agent('1', CREATOR_A, WALLET_U, { compromisedAt: at(2) });
     const sibling = agent('2', CREATOR_B, WALLET_U);

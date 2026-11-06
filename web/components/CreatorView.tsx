@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
-import type { Address, AgentSummary, CreatorDetail } from '@reputed/shared';
-import { formatDate } from '@/lib/format';
+import { hashscan, type Address, type AgentSummary, type CreatorDetail } from '@reputed/shared';
+import { daysUntil, formatDate } from '@/lib/format';
 import { useCreator } from '@/lib/useCreator';
 import { AddressChip } from './AddressChip';
 import { EmptyState } from './EmptyState';
@@ -20,12 +20,14 @@ function points(value: number): string {
 }
 
 function AgentStatus({ agent }: { agent: AgentSummary }) {
-  // The summary only says whether the agent NFT was transferred (wallet is null afterwards).
-  return agent.wallet === null ? (
-    <span className="badge tier-3">Operator changed</span>
-  ) : (
-    <span className="badge badge-verified">Active</span>
-  );
+  switch (agent.status) {
+    case 'active':
+      return <span className="badge badge-verified">Active</span>;
+    case 'compromised':
+      return <span className="badge badge-danger">Compromised</span>;
+    case 'operator-changed':
+      return <span className="badge tier-3">Operator changed</span>;
+  }
 }
 
 function AgentsTable({ agents }: { agents: AgentSummary[] }) {
@@ -72,14 +74,26 @@ function AgentsTable({ agents }: { agents: AgentSummary[] }) {
   );
 }
 
+function halvingText(iso: string): string {
+  const days = daysUntil(iso);
+  if (days === null) return '';
+  return days === 0 ? 'halving today' : `halving in ${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
 function Penalties({ creator }: { creator: CreatorDetail }) {
   if (creator.penalties.length === 0) {
     return <p className="muted">No confirmed penalties.</p>;
   }
+  // The summary counts down to the soonest halving among penalties that still carry points.
+  const next = creator.penalties
+    .filter((p) => p.points > 0)
+    .map((p) => p.nextHalvingAt)
+    .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
   return (
     <>
       <p>
-        <strong>−{points(creator.penaltyTotal)} points</strong> from confirmed penalties. Penalties fade over time.
+        <strong>−{points(creator.penaltyTotal)} points</strong>
+        {next && <>, {halvingText(next)}</>}
       </p>
       <div className="table-wrap">
         <table className="table">
@@ -89,6 +103,8 @@ function Penalties({ creator }: { creator: CreatorDetail }) {
               <th>Agent</th>
               <th>Category</th>
               <th>Current points</th>
+              <th>Next halving</th>
+              <th>Reports</th>
             </tr>
           </thead>
           <tbody>
@@ -102,6 +118,20 @@ function Penalties({ creator }: { creator: CreatorDetail }) {
                 </td>
                 <td>{p.category}</td>
                 <td>−{points(p.points)}</td>
+                <td>{formatDate(p.nextHalvingAt)}</td>
+                <td>
+                  {p.reports.length === 0 ? (
+                    <span className="muted">None</span>
+                  ) : (
+                    <span className="row">
+                      {p.reports.map((r, i) => (
+                        <a key={`${r.clientAddress}-${r.feedbackIndex}`} href={hashscan.tx(r.txId)} target="_blank" rel="noreferrer">
+                          Report {i + 1}
+                        </a>
+                      ))}
+                    </span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

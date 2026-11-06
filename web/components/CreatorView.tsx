@@ -159,7 +159,8 @@ export function CreatorView({ address }: { address: string }) {
   const { address: connected } = useAccount();
 
   if (!valid) return <EmptyState message="That isn’t a valid wallet address." action={{ label: 'Explore agents', href: '/explore' }} />;
-  if (error) return <InlineError message="Couldn’t load this creator. The server may be down." onRetry={() => void refetch()} />;
+  // Keep showing the creator if only a background refresh failed.
+  if (error && !creator) return <InlineError message="Couldn’t load this creator. The server may be down." onRetry={() => void refetch()} />;
   if (creator === null) {
     return (
       <EmptyState

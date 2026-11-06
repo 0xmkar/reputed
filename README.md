@@ -10,6 +10,7 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 | [Phased Implementation Plan](docs/02-implementation-plan.md) | The full build in 9 phases (0–8), each with tasks and manual tests; risks and open decisions |
 | [Features List](docs/03-features.md) | 58 features in 8 groups, with IDs, priority (MVP / Next / Later) and phase |
 | [UI Elements](docs/04-ui-elements.md) | Screen map, global elements, 6 screens, shared components and states |
+| [Work Split](docs/05-work-split.md) | Who owns each phase, Swapnil's task list, and the rules for working in parallel |
 
 ## Stack
 
@@ -21,4 +22,4 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 
 ## Status
 
-Planning. The 4-hour MVP plan is the build order for the first demo.
+In progress. Work follows the phased plan, MVP features first. See the [work split](docs/05-work-split.md).

@@ -1,0 +1,16 @@
+.claude/peers.txt
+.claude/me.txt
+.claude/notify-peers.sh
+CLAUDE.md
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.next/
+out/
+cache/
+broadcast/
+coverage/
+*.tsbuildinfo
+.DS_Store

@@ -7,7 +7,7 @@ Check an agent's reputation from code before you pay or hire it, and let LLM age
 ```ts
 import { ReputedClient, ReputedError } from '@reputed/sdk';
 
-const client = new ReputedClient({ apiUrl: 'http://localhost:4000' });
+const client = new ReputedClient({ apiUrl: 'http://localhost:4000' }); // optional: timeoutMs (default 10000), fetch
 
 const agent = await client.getAgent('7'); // profile, score, creator, credentials, reviews
 
@@ -36,7 +36,7 @@ Anything that is not a gate result is a `ReputedError` with a `code`:
 | `INVALID_ARGUMENT` | A bad agent ID or `minScore`, caught before any request |
 | `AGENT_NOT_FOUND` | The API answered 404 |
 | `CHAIN_ERROR` | The API reported a Hedera or RPC failure |
-| `API_ERROR` | The API was unreachable or answered with an unexpected error |
+| `API_ERROR` | The API was unreachable, did not answer within `timeoutMs` (10 seconds by default), or answered with an unexpected error |
 
 `NOT_HUMAN_BACKED`, `SCORE_TOO_LOW` and `AGENT_COMPROMISED` are the gate reasons above. `PAYMENT_NOT_FOUND` and `SELF_REVIEW` are reserved for `review()`.
 

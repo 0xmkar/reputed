@@ -42,6 +42,9 @@ test('verify_counterparty reports ok false with a reason', async () => {
   assert.equal(body.ok, false);
   assert.equal(body.reason, 'SCORE_TOO_LOW');
   assert.equal(body.score, 40);
+  assert.equal(body.isNew, false);
+  assert.equal(body.status, 'active');
+  assert.equal(body.scoresStale, false);
 });
 
 test('a missing agent comes back as a tool error with the code', async () => {

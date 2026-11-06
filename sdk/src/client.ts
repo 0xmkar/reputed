@@ -6,6 +6,8 @@ export interface ReputedClientOptions {
   apiUrl: string;
   /** Override fetch, for tests or custom agents. Defaults to the global fetch. */
   fetch?: typeof fetch;
+  /** Give up on a request after this many milliseconds. Defaults to 10000. */
+  timeoutMs?: number;
 }
 
 export interface VerifyOptions {
@@ -20,14 +22,18 @@ export type VerifyResult =
   | { ok: false; reason: GateFailure; message: string; agent: AgentDetail };
 
 const DECIMAL = /^\d+$/;
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 export class ReputedClient {
   readonly #apiUrl: string;
   readonly #fetch: typeof fetch;
+  readonly #timeoutMs: number;
 
   constructor(options: ReputedClientOptions) {
     this.#apiUrl = options.apiUrl.replace(/\/+$/, '');
-    this.#fetch = options.fetch ?? fetch;
+    // Bound to globalThis: calling the global fetch with another `this` throws "Illegal invocation" in browsers.
+    this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   /** Profile, score, tier, creator, creator score, credentials and reviews of one agent. */
@@ -65,11 +71,22 @@ export class ReputedClient {
   }
 
   async #getJson<T>(path: string): Promise<T> {
+    // One deadline covers connecting and reading the body: a hung API must not block a payment gate forever.
+    const signal = AbortSignal.timeout(this.#timeoutMs);
+    const unreachable = (cause: unknown, status?: number) =>
+      new ReputedError(
+        'API_ERROR',
+        isTimeout(cause)
+          ? `The Reputed API at ${this.#apiUrl} did not answer within ${this.#timeoutMs} ms.`
+          : `Could not reach the Reputed API at ${this.#apiUrl}.`,
+        { status, cause },
+      );
+
     let res: Response;
     try {
-      res = await this.#fetch(`${this.#apiUrl}${path}`, { headers: { accept: 'application/json' } });
+      res = await this.#fetch(`${this.#apiUrl}${path}`, { headers: { accept: 'application/json' }, signal });
     } catch (cause) {
-      throw new ReputedError('API_ERROR', `Could not reach the Reputed API at ${this.#apiUrl}.`, { cause });
+      throw unreachable(cause);
     }
 
     if (!res.ok) {
@@ -86,7 +103,12 @@ export class ReputedClient {
     try {
       return (await res.json()) as T;
     } catch (cause) {
+      if (isTimeout(cause)) throw unreachable(cause, res.status);
       throw new ReputedError('API_ERROR', 'The Reputed API sent a response that is not valid JSON.', { status: res.status, cause });
     }
   }
+}
+
+function isTimeout(err: unknown): boolean {
+  return err instanceof Error && err.name === 'TimeoutError';
 }

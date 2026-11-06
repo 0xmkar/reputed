@@ -83,3 +83,31 @@ test('verifyCounterparty throws when the agent cannot be fetched', async () => {
   const { client } = clientFor(404, { code: 'NOT_FOUND', message: 'No such agent' });
   await rejectsWith(client.verifyCounterparty('99', { minScore: 75 }), 'AGENT_NOT_FOUND');
 });
+
+test('a request that never answers fails with API_ERROR after timeoutMs', async () => {
+  const hung = ((_url: unknown, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    })) as typeof fetch;
+  const client = new ReputedClient({ apiUrl: 'http://api.test', fetch: hung, timeoutMs: 20 });
+  await assert.rejects(
+    client.getAgent('7'),
+    (err: unknown) => err instanceof ReputedError && err.code === 'API_ERROR' && /did not answer within 20 ms/.test(err.message),
+  );
+});
+
+test('the default fetch is called with globalThis as this, not the client', async () => {
+  const original = globalThis.fetch;
+  let seenThis: unknown = 'not called';
+  globalThis.fetch = function (this: unknown) {
+    seenThis = this;
+    return Promise.resolve(new Response(JSON.stringify(agentFixture()), { status: 200 }));
+  } as typeof fetch;
+  try {
+    const client = new ReputedClient({ apiUrl: 'http://api.test' });
+    await client.getAgent('7');
+    assert.equal(seenThis, globalThis);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

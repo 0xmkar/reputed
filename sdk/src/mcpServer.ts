@@ -72,7 +72,16 @@ export function createMcpServer(client: ReputedClient): McpServer {
       try {
         const result = await client.verifyCounterparty(agentId, { minScore, humanBackedOnly });
         const { agent } = result;
-        const context = { agentId: agent.agentId, name: agent.name, score: agent.score.value, tier: agent.score.tier, humanBacked: agent.humanBacked };
+        const context = {
+          agentId: agent.agentId,
+          name: agent.name,
+          score: agent.score.value,
+          tier: agent.score.tier,
+          isNew: agent.score.isNew,
+          humanBacked: agent.humanBacked,
+          status: agent.status,
+          scoresStale: agent.scoresStale,
+        };
         return asText(result.ok ? { ok: true, ...context } : { ok: false, reason: result.reason, message: result.message, ...context });
       } catch (err) {
         return asError(err);

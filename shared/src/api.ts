@@ -36,6 +36,8 @@ export interface AgentEndpoints {
   x402PriceHbar?: number;
 }
 
+export type AgentStatus = 'active' | 'compromised' | 'operator-changed';
+
 export interface AgentSummary {
   agentId: string; // uint256 as a decimal string
   name: string;
@@ -50,11 +52,14 @@ export interface AgentSummary {
   creatorScore: number | null;
   reviewsCounted: number;
   registeredAt: string; // ISO 8601
+  acceptsX402: boolean;
+  status: AgentStatus;
 }
 
 export interface Credential {
   tokenId: string; // 0.0.x
   serial: number;
+  kind: 'human-backed' | 'milestone';
   title: string;
   issuedAt: string;
   revoked: boolean;
@@ -75,13 +80,14 @@ export interface ReviewResponse {
   responder: Address;
   uri: string;
   hash: `0x${string}`;
+  text?: string;
   createdAt: string;
 }
 
 export interface Review {
   clientAddress: Address;
   feedbackIndex: number;
-  value: number;
+  value: number; // always normalised to 0-100
   tag1: string; // 'quality' | 'misconduct'
   tag2: string;
   endpoint: string;
@@ -92,7 +98,7 @@ export interface Review {
   exclusionReason?: ExclusionReason;
   reviewerHumanBacked: boolean;
   feedbackUri: string;
-  txId: string;
+  txId: string; // 0x hash or consensus timestamp: both open with hashscan.tx()
   response?: ReviewResponse;
 }
 
@@ -107,6 +113,14 @@ export interface AgentDetail extends AgentSummary {
   penaltiesConfirmed: number;
   updatedAt: string;
   snapshotUrl?: string;
+  /** True when the latest snapshot is 2 or more epochs old. */
+  scoresStale: boolean;
+}
+
+export interface PenaltyReport {
+  clientAddress: Address;
+  feedbackIndex: number;
+  txId: string;
 }
 
 export interface Penalty {
@@ -114,6 +128,9 @@ export interface Penalty {
   category: string;
   points: number; // current, after decay
   confirmedAt: string;
+  /** When the points next halve; show as "halving in N days". */
+  nextHalvingAt: string;
+  reports: PenaltyReport[];
 }
 
 export interface CreatorDetail {
@@ -128,13 +145,17 @@ export interface CreatorDetail {
 
 export interface AgentQuery {
   q?: string;
+  /** true shows only human-backed agents. false or missing applies no filter. */
   humanBacked?: boolean;
   minScore?: number;
 }
 
 export interface AgentListResponse {
   agents: AgentSummary[];
+  /** Global totals from the latest snapshot. They do not change with the query filters. */
   stats: { agents: number; humanBacked: number; creators: number; reviewsCounted: number };
+  /** True when the latest snapshot is 2 or more epochs old. */
+  scoresStale: boolean;
 }
 
 /** POST /api/rp-signature, with no body or `{}`. Start here: the nonce feeds the next two steps. */

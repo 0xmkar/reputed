@@ -5,7 +5,7 @@
 | Path | What it is |
 | --- | --- |
 | `src/CreatorRegistry.sol` | The contract |
-| `src/interfaces/ICreatorRegistry.sol` | The fixed interface `server/` and `web/` build against |
+| `src/interfaces/ICreatorRegistry.sol` | The fixed interface `apps/server` and `apps/web` build against |
 | `src/hedera/` | `0x167` interface and the checked call wrappers in `Hts.sol` |
 | `test/` | Unit tests. The doubles in `test/doubles/` exist only here |
 | `script/` | Funding, deployment, ABI generation, the read-only preflight and the funded T1.9b check |
@@ -95,7 +95,7 @@ WALLET_U_KEY=
 
 Hedera charges for gas used, not the limit, at about 124 tinybar per gas today: on testnet a transaction with a 3,000,000 limit that used 102,501 gas was charged 0.127 HBAR. So a `linkAgent` that auto-associates costs about 1.5 HBAR, and a generous limit costs nothing extra. The sender still needs a balance that covers the limit, about 1.9 HBAR for 1,500,000. Lower the limits once the Mirror Node shows real use.
 
-`forge test` models no gas, so it cannot catch a limit that is too low: `linkAgent` passes there at 1,000,000. These limits are only enforced by whoever sends the call, so `web/` and any server call must set them.
+`forge test` models no gas, so it cannot catch a limit that is too low: `linkAgent` passes there at 1,000,000. These limits are only enforced by whoever sends the call, so `apps/web` and any server call must set them.
 
 ## Credential delivery
 
@@ -167,7 +167,7 @@ The rule fails closed in two ways to know about. A report voids every wallet rec
 
 **`isHumanBacked` is the authority, not the NFT.** Nothing in the contract removes a credential when backing ends, so after a sale, a rotation or a compromise report the old wallet still holds a frozen `reputed:human-backed:<agentId>` NFT, and the holder cannot remove it. After a report `getAgentWallet` still names that wallet, so an agent page reading the wallet's NFTs would show a credential the view denies. Never treat holding the NFT as proof of backing.
 
-Clearing stale credentials takes an issuer job, which is **not built**. It belongs in `server/`, because it needs the issuer key:
+Clearing stale credentials takes an issuer job, which is **not built**. It belongs in `apps/server`, because it needs the issuer key:
 
 | Trigger | Revoke |
 | --- | --- |
@@ -239,4 +239,4 @@ Deployed 2026-11-06. Source verified on Sourcify with an exact creation and runt
 
 Real gas: deploy 1,988,234. `issueCredential` to an already associated wallet 369,368. `revokeCredential` 83,081. `registerCreator` 71,089.
 
-Phase 3 passed on testnet with `server/scripts/testnet-phase3.ts`, using two test-only creators registered directly with the verifier key, not through World ID. T3.1–T3.5 and T3.7–T3.9 passed, and T3.6 was not run. Agents 159, 160 and 162 belong to the first test creator, and 163 to the second. Real gas: `register` 454,322, `linkAgent` 1,208,089 with auto-association and 503,376 without.
+Phase 3 passed on testnet with `apps/server/scripts/testnet-phase3.ts`, using two test-only creators registered directly with the verifier key, not through World ID. T3.1–T3.5 and T3.7–T3.9 passed, and T3.6 was not run. Agents 159, 160 and 162 belong to the first test creator, and 163 to the second. Real gas: `register` 454,322, `linkAgent` 1,208,089 with auto-association and 503,376 without.

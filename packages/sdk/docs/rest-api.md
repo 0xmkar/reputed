@@ -1,6 +1,6 @@
 # Reputed REST API (reads)
 
-These are the read endpoints the web app and the SDK call. The request and response shapes are the types in [`shared/src/api.ts`](../../shared/src/api.ts), which is the contract between the server and its clients. This page describes that contract; the server itself lives in `server/`.
+These are the read endpoints the web app and the SDK call. The request and response shapes are the types in [`packages/shared/src/api.ts`](../../shared/src/api.ts), which is the contract between the server and its clients. This page describes that contract; the server itself lives in `apps/server`.
 
 Base URL: `NEXT_PUBLIC_API_URL` for the web app (`http://localhost:4000` in development). All responses are JSON.
 
@@ -62,6 +62,6 @@ Every non-2xx response has the body `ApiError`:
 | 429 | `RATE_LIMITED` | Too many requests |
 | 5xx | `CHAIN_ERROR` | The server could not read Hedera |
 
-The full list of codes is `ApiErrorCode` in `shared/src/api.ts`. The statuses above are what the web app and SDK rely on; check the server if you depend on others.
+The full list of codes is `ApiErrorCode` in `packages/shared/src/api.ts`. The statuses above are what the web app and SDK rely on; check the server if you depend on others.
 
 The SDK maps these to `ReputedError` codes: 404 becomes `AGENT_NOT_FOUND`, a `CHAIN_ERROR` body becomes `CHAIN_ERROR`, and anything else (including an unreachable server) becomes `API_ERROR`.

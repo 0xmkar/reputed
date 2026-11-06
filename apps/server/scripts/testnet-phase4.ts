@@ -1,6 +1,7 @@
-// Plan test T5.4 on Hedera testnet: two different creators pay an agent and report fraud through the
-// real server. Run the Phase 3 and Phase 4 scripts first. The scorer must be running.
-// Usage: AGENT_X1=159 pnpm exec tsx --env-file=../.env scripts/testnet-phase5.ts
+// Runs plan tests T4.1-T4.9 against Hedera testnet through the real server, then seeds what T5.1-T5.4
+// need. The server must be running, and the Phase 3 script must have run (AGENT_X1 is its X1 agent).
+// Usage: AGENT_X1=159 pnpm exec tsx --env-file=../../.env scripts/testnet-phase4.ts
+import { AccountId, Client, PrivateKey, TopicId, TopicMessageSubmitTransaction } from '@hashgraph/sdk';
 import {
   createPublicClient, createWalletClient, defineChain, http, keccak256, stringToHex,
   type Abi, type Address, type Hash, type Hex,
@@ -107,39 +108,67 @@ async function ensureFunded(address: Address, hbar: bigint) {
   await sleep(3000);
 }
 
-async function agentJson(id: bigint | string): Promise<any> {
-  return (await fetch(`${api}/api/agents/${id}`)).json();
-}
-const creatorJson = async (address: Address): Promise<any> => (await fetch(`${api}/api/creators/${address}`)).json();
-
 async function main() {
-  const before = await agentJson(agentId);
-  const c1Before = await creatorJson(c1.account.address);
-  const c2Before = await creatorJson(c2.account.address);
-  const c3Before = await creatorJson(c3.account.address);
-  console.log(`before: agent ${before.score.value}, creator ${c1Before.score}, others ${c2Before.score} and ${c3Before.score}`);
-
-  for (const [name, reporter] of [['creator 2', c2], ['creator 3', c3]] as const) {
-    const paid = await pay(reporter, before.wallet, 20_000_000n);
-    const report = await review(reporter, { value: 0, tag1: 'misconduct', tag2: 'fraud', comment: 'Failed to deliver after payment', proof: paid });
-    console.log(`${name} reported fraud: ${report.out.ok ? 'ok' : 'FAILED'}, ${report.out.hash}`);
+  const agentWallet = await reader.readContract({
+    address: IDENTITY_REGISTRY, abi: [{ type: 'function', name: 'getAgentWallet', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }] }],
+    functionName: 'getAgentWallet', args: [agentId],
+  }) as Address;
+  await ensureFunded(c3.account.address, 3n);
+  if (!(await reader.readContract({ address: registry, abi: creatorRegistryAbi as Abi, functionName: 'isCreator', args: [c3.account.address] }))) {
+    const nullifier = keccak256(stringToHex(`reputed-test-only:${c3.account.address}`));
+    const r = await write(verifier, registry, creatorRegistryAbi as Abi, 'registerCreator', [nullifier, c3.account.address], 300_000n);
+    if (!r.ok) throw new Error(`registerCreator: ${r.hash}`);
+    await sleep(4000);
   }
 
-  let after: any;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    await sleep(5000);
-    after = await agentJson(agentId);
-    if (after.penaltiesConfirmed > 0) break;
-  }
-  const c1After = await creatorJson(c1.account.address);
-  const c2After = await creatorJson(c2.account.address);
-  const c3After = await creatorJson(c3.account.address);
-  console.log(`after: agent ${after.score.value} ${after.score.tier}, penalties ${after.penaltiesConfirmed}, creator ${c1After.score}, P ${c1After.penaltyTotal}, others ${c2After.score} and ${c3After.score}`);
-  console.log(JSON.stringify(c1After.penalties));
-  check('T5.4', after.penaltiesConfirmed === 1 && after.score.value < before.score.value && c1After.score <= 80 && c1After.score < c1Before.score
-    && c2After.score === c2Before.score && c3After.score === c3Before.score,
-    `agent ${before.score.value} to ${after.score.value}, creator ${c1Before.score} to ${c1After.score}, other creators unchanged`);
-  process.exit(results.some((line) => line.startsWith('FAIL')) ? 1 : 0);
+  const paid = await pay(c2, agentWallet, 100_000_000n);
+  check('T4.1', true, `1 HBAR to ${agentWallet}, ${paid}`);
+
+  const first = await review(c2, { value: 90, tag1: 'quality', tag2: 'accuracy', comment: 'Testnet review', proof: paid });
+  const [, , topic, seq] = /^(hcs):\/\/([\d.]+)\/(\d+)$/.exec(first.feedbackUri) ?? [];
+  const msg = await mirrorJson(`/api/v1/topics/${topic}/messages/${seq}`);
+  const onTopic = Buffer.from(msg.message, 'base64');
+  check('T4.2', first.out.ok && keccak256(onTopic) === first.feedbackHash && Buffer.compare(onTopic, Buffer.from(first.bytes)) === 0,
+    `${first.feedbackUri}, HCS bytes hash to feedbackHash, gas ${first.out.gas}, ${first.out.hash}`);
+
+  const self = await write(c1, REPUTATION_REGISTRY, reputationRegistryAbi as Abi, 'giveFeedback',
+    [agentId, 100n, 0, 'quality', 'accuracy', '', '', `0x${'00'.repeat(32)}`], 800_000n);
+  check('T4.3', !self.ok, `owner review reverted, ${self.hash}`);
+
+  const lastIndex = await reader.readContract({ address: REPUTATION_REGISTRY, abi: reputationRegistryAbi as Abi, functionName: 'getLastIndex', args: [agentId, c2.account.address] }) as bigint;
+  const read = await reader.readContract({ address: REPUTATION_REGISTRY, abi: reputationRegistryAbi as Abi, functionName: 'readFeedback', args: [agentId, c2.account.address, lastIndex] }) as [bigint, number, string, string, boolean];
+  check('T4.4', read[0] === 90n && read[2] === 'quality' && read[3] === 'accuracy', `readFeedback index ${lastIndex}: ${read[0]} ${read[2]}/${read[3]}`);
+
+  const unbacked = await review(u, { value: 0, tag1: 'quality', tag2: 'accuracy', comment: 'No payment, not human-backed' });
+  check('T4.5', unbacked.out.ok, `wallet U review landed, ${unbacked.out.hash}`);
+
+  const madeUp = await review(c2, { value: 10, tag1: 'quality', tag2: 'accuracy', proof: '0.0.4441206@1700000000.000000001' });
+  check('T4.6', madeUp.out.ok, `made-up payment review landed, ${madeUp.out.hash}`);
+
+  const toRevoke = await review(c2, { value: 5, tag1: 'quality', tag2: 'uptime', comment: 'To be revoked' });
+  const idx = await reader.readContract({ address: REPUTATION_REGISTRY, abi: reputationRegistryAbi as Abi, functionName: 'getLastIndex', args: [agentId, c2.account.address] }) as bigint;
+  const revoked = await write(c2, REPUTATION_REGISTRY, reputationRegistryAbi as Abi, 'revokeFeedback', [agentId, idx], 300_000n);
+  await sleep(4000);
+  const all = await reader.readContract({ address: REPUTATION_REGISTRY, abi: reputationRegistryAbi as Abi, functionName: 'readAllFeedback', args: [agentId, [c2.account.address], '', '', false] }) as [Address[], bigint[], ...unknown[]];
+  check('T4.7', toRevoke.out.ok && revoked.ok && !all[1].includes(idx), `index ${idx} revoked and left out, ${revoked.hash}`);
+
+  const responded = await write(c1, REPUTATION_REGISTRY, reputationRegistryAbi as Abi, 'appendResponse',
+    [agentId, c2.account.address, lastIndex, first.feedbackUri, first.feedbackHash], 400_000n);
+  check('T4.8', responded.ok, `ResponseAppended, ${responded.hash}`);
+
+  const uAccount = (await mirrorJson(`/api/v1/accounts/${u.account.address}`)).account as string;
+  const client = Client.forTestnet().setOperator(AccountId.fromString(uAccount), PrivateKey.fromStringECDSA(env('WALLET_U_KEY').replace(/^0x/, '')));
+  let refused = '';
+  try {
+    const tx = await new TopicMessageSubmitTransaction({ topicId: TopicId.fromString(env('REVIEWS_TOPIC_ID')), message: 'spam' }).execute(client);
+    await tx.getReceipt(client);
+  } catch (err) { refused = String((err as Error).message ?? err); }
+  client.close();
+  check('T4.9', /INVALID_SIGNATURE/.test(refused), `direct post from wallet U refused: ${refused.slice(0, 70)}`);
+
+  const failed = results.filter((line) => line.startsWith('FAIL'));
+  console.log(`${results.length - failed.length}/${results.length} passed`);
+  process.exit(failed.length ? 1 : 0);
 }
 
 main().catch((err) => { console.error(String(err?.shortMessage ?? err?.message ?? err).slice(0, 400)); process.exit(2); });

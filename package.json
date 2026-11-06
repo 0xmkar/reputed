@@ -3,8 +3,12 @@
   "private": true,
   "packageManager": "pnpm@9.4.0",
   "scripts": {
-    "dev": "pnpm --parallel --filter @reputed/server --filter @reputed/web dev",
-    "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "build": "turbo run build",
+    "dev": "turbo run dev --filter=@reputed/server --filter=@reputed/web",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0"
   }
 }

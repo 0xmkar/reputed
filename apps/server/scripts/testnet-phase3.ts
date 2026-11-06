@@ -1,7 +1,7 @@
 // Runs plan tests T3.1-T3.5 and T3.7-T3.9 against Hedera testnet with real transactions.
 // TEST_CREATOR_1 and TEST_CREATOR_2 are registered directly with the verifier key and a nullifier
 // labelled test-only, so this does not involve World ID. Creators A, B and C stay clean for Phase 2.
-// Usage: pnpm exec tsx --env-file=../.env scripts/testnet-phase3.ts
+// Usage: pnpm exec tsx --env-file=../../.env scripts/testnet-phase3.ts
 import {
   createPublicClient, createWalletClient, decodeEventLog, defineChain, http, keccak256, stringToHex, toHex,
   type Abi, type Address, type Hash, type Hex,

@@ -1,5 +1,5 @@
 // Creates the reviews and scores HCS topics. Run from server/:
-//   pnpm exec tsx --env-file=../.env scripts/create-topics.ts
+//   pnpm exec tsx --env-file=../../.env scripts/create-topics.ts
 // A topic whose ID is already set in the environment is left alone.
 import { PrivateKey, TopicCreateTransaction, type Client } from '@hashgraph/sdk';
 import { ConfigError, loadHederaConfig } from '../src/config.ts';

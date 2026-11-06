@@ -49,7 +49,7 @@ Anything that is not a gate result is a `ReputedError` with a `code`:
   "mcpServers": {
     "reputed": {
       "command": "node",
-      "args": ["/path/to/reputed/sdk/src/mcp.ts"],
+      "args": ["/path/to/reputed/packages/sdk/src/mcp.ts"],
       "env": { "REPUTED_API_URL": "http://localhost:4000" }
     }
   }
@@ -67,9 +67,9 @@ See [docs/rest-api.md](docs/rest-api.md).
 ```sh
 pnpm --filter @reputed/sdk typecheck
 pnpm --filter @reputed/sdk test
-REPUTED_API_URL=http://localhost:4000 node sdk/examples/check-agent.ts 7
+REPUTED_API_URL=http://localhost:4000 node packages/sdk/examples/check-agent.ts 7
 ```
 
 The package is TypeScript source with erasable syntax only, so Node 22.18 or newer runs it directly. It is `private` until a build step is added for publishing.
 
-Not built yet: `review()` (signs a transaction, owned by the contracts side; the web review modal in `web/components/review` shows the flow) and `isHumanBacked()` (the CreatorRegistry ABI is now in `shared/src/abi`, so this can be built).
+Not built yet: `review()` (signs a transaction, owned by the contracts side; the web review modal in `apps/web/components/review` shows the flow) and `isHumanBacked()` (the CreatorRegistry ABI is now in `packages/shared/src/abi`, so this can be built).

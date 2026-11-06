@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CONTRACTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ENV_FILE:-$CONTRACTS_DIR/../.env}"
+ENV_FILE="${ENV_FILE:-$CONTRACTS_DIR/../../.env}"
 
 die() {
   echo "error: $*" >&2

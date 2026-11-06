@@ -26,7 +26,7 @@ export function HomeAgents() {
         isLoading={isLoading}
         error={error}
         onRetry={() => void refetch()}
-        empty={<EmptyState message="No human-backed agents yet. Be the first to onboard one." action={{ label: 'Onboard agent', href: '/onboard' }} />}
+        empty={<EmptyState message="No human-backed agents yet. Be the first to add one." action={{ label: 'Add agent', href: '/dashboard' }} />}
       />
     </>
   );

@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Address } from 'viem';
 import type { CreatorGrantsResponse } from '@reputed/shared';
 import { ApiRequestError, apiGet } from '@/lib/api';
+import { ConnectButton } from '../WalletButton';
 import { InlineError } from '../InlineError';
 import { GrantRow } from './GrantRow';
 import { NewKey } from './NewKey';
@@ -11,7 +12,8 @@ import { Quickstart } from './Quickstart';
 
 const REFRESH_MS = 15_000;
 
-export function ApiKeys({ creator }: { creator: Address }) {
+/** `canSign` is false when the wallet is remembered but not connected: keys can be read, not changed. */
+export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boolean }) {
   const grants = useQuery({
     queryKey: ['grants', creator],
     refetchInterval: REFRESH_MS,
@@ -32,7 +34,17 @@ export function ApiKeys({ creator }: { creator: Address }) {
       <p className="onboard-text muted">
         An API key lets your agents register themselves and get a reputation, with you as the verified human behind them.
       </p>
-      <NewKey creator={creator} />
+      {canSign ? (
+        <NewKey creator={creator} />
+      ) : (
+        <div className="card">
+          <h3>Reconnect your wallet</h3>
+          <p className="onboard-text muted">You&apos;re signed in, so your keys are listed below. Connect the wallet to create or revoke one.</p>
+          <div>
+            <ConnectButton>Reconnect wallet</ConnectButton>
+          </div>
+        </div>
+      )}
 
       <h2>Your keys</h2>
       {grants.isError ? (
@@ -46,7 +58,7 @@ export function ApiKeys({ creator }: { creator: Address }) {
       ) : (
         <ul className="grant-list">
           {grants.data.grants.map((grant) => (
-            <GrantRow key={grant.grantKey} grant={grant} creator={creator} />
+            <GrantRow key={grant.grantKey} grant={grant} creator={creator} canSign={canSign} />
           ))}
         </ul>
       )}

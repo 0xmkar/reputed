@@ -6,6 +6,7 @@ export type ApiErrorCode =
   | 'BAD_REQUEST'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
+  | 'UNAUTHORIZED'
   | 'INVALID_PROOF'
   | 'ALREADY_REGISTERED'
   | 'WALLET_TAKEN'
@@ -235,6 +236,29 @@ export interface VerifyResponse {
   transactionId: string | null;
   wallet: Address;
   nullifierHash: `0x${string}`;
+}
+
+/** POST /api/session: sign in with a wallet, once, and keep the token instead of signing again. */
+export interface SessionRequest {
+  wallet: Address;
+  /** Unix seconds when the wallet signed. The server accepts it for 5 minutes. */
+  issuedAt: number;
+  /** EIP-191 signature by `wallet` over sessionMessage(wallet, issuedAt). */
+  signature: `0x${string}`;
+}
+
+/** The token goes in an `Authorization: Bearer` header. It proves control of `wallet`, not creator status. */
+export interface SessionResponse {
+  token: string;
+  wallet: Address;
+  /** Unix seconds. */
+  expiresAt: number;
+}
+
+/** GET /api/session: the token is still good. */
+export interface SessionInfo {
+  wallet: Address;
+  expiresAt: number;
 }
 
 /** POST /api/agent-file: an ERC-8004 registration file. Extra fields are kept in the file. */

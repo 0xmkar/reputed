@@ -30,10 +30,15 @@ export const N2 = '0x1bf8406809dcefb1486dadc96c0a897db9bab002053054cf64272db512c
 /** Well-formed, but signed by nobody: a request carrying it fails only on the signature. */
 export const JUNK_SIGNATURE: Hex = `0x${'11'.repeat(65)}`;
 
+export const signMessageAs = (wallet: Address, message: string) =>
+  accountOf(wallet)!.signMessage({ message });
+
 export const signBytes = (wallet: Address, raw: Uint8Array) =>
   accountOf(wallet)!.signMessage({ message: { raw } });
 
 export const NONCE = '0x00ab1fd2c0a14ef39b3c4a4ed7b5a8ce6a44f1e9a9c13c5ee2f8b1a7d6e43c10';
+
+export const SESSION_SECRET = 'test-session-secret-0123456789abcdef-0123';
 
 export const WORLD: WorldConfig = {
   apiBase: 'https://world.test',
@@ -192,6 +197,7 @@ export async function harness(
 
   const deps: AppDeps = {
     world,
+    sessionSecret: SESSION_SECRET,
     identityRegistry: IDENTITY,
     corsOrigins: ['http://localhost:3000'],
     trustProxy: options.trustProxy ?? [],

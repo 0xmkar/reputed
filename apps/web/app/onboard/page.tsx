@@ -1,11 +1,6 @@
-import type { Metadata } from 'next';
-import { OnboardGate } from '@/components/onboard/OnboardGate';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Onboard agent — Reputed',
-  description: 'Register an agent, link it to your verified creator identity and receive its Human-backed credential.',
-};
-
+// Agents register from the SDK now, with an API key from the dashboard. Old links still land somewhere useful.
 export default function OnboardPage() {
-  return <OnboardGate />;
+  redirect('/dashboard');
 }

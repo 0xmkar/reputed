@@ -18,6 +18,19 @@ export function walletBindingMessage(wallet: Address, action: string, nonce: str
   ].join('\n');
 }
 
+/**
+ * The text a wallet signs with EIP-191 for POST /api/session. It binds the wallet to a time, so
+ * the signature is good for one sign-in within a few minutes and is no use for anything else.
+ */
+export function sessionMessage(wallet: Address, issuedAt: number): string {
+  return [
+    'Reputed: sign in with this wallet.',
+    `Wallet: ${getAddress(wallet)}`,
+    `Issued at: ${issuedAt}`,
+    'This costs nothing and sends no transaction.',
+  ].join('\n');
+}
+
 function checksummedCaip(caip: string): string {
   const split = caip.lastIndexOf(':') + 1;
   return `${caip.slice(0, split)}${getAddress(caip.slice(split))}`;

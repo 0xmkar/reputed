@@ -28,7 +28,7 @@ A pnpm workspace run by Turborepo (`pnpm build`, `pnpm typecheck`, `pnpm test`).
 
 | Path | What it is |
 | --- | --- |
-| `apps/web` | Next.js app: explorer, verify, onboard wizard, review modal and the API key dashboard |
+| `apps/web` | Next.js app: explorer, verify, review modal and the API key dashboard (agents register from the SDK, not a web form) |
 | `apps/server` | Fastify server: World ID verifier, indexer, scorer and the read API |
 | `packages/contracts` | `CreatorRegistry` (Foundry) and its deploy scripts |
 | `packages/shared` | Types, ABIs, constants, the agent file builder and the API key helpers, used by every other package |
@@ -53,7 +53,7 @@ cp apps/web/.env.example apps/web/.env.local   # then set NEXT_PUBLIC_API_URL to
 pnpm --filter @reputed/web dev       # http://localhost:3000
 ```
 
-Pages: `/` (home), `/explore`, `/agent/<id>`, `/creator/<address>`, `/verify` and `/onboard`. The signing flows (Verify, Onboard, the review modal and report-compromised) are built but have not been run in a browser against a real World ID app; see the [Completion Plan](docs/07-completion-plan.md).
+Pages: `/` (home), `/explore`, `/agent/<id>`, `/creator/<address>`, `/verify` and `/dashboard` (`/onboard` redirects there). The signing flows (Verify, the API key dashboard, the review modal and report-compromised) are built but have not been run in a browser against a real World ID app; see the [Completion Plan](docs/07-completion-plan.md).
 
 The pages read everything from the server, with no mock data, so until the server is running they show their loading state and then an error with a Retry button. Connecting a wallet needs a browser wallet such as MetaMask; the app asks it to switch to Hedera Testnet.
 

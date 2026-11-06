@@ -31,6 +31,7 @@ const store = createVerificationStore(cfg.verifierDbPath, {
 const app = await buildApp(
   {
     world: cfg.world,
+    sessionSecret: cfg.sessionSecret,
     identityRegistry: cfg.identityRegistry,
     corsOrigins: cfg.corsOrigins,
     trustProxy: cfg.trustProxy,

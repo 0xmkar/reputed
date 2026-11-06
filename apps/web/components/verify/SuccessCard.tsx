@@ -45,8 +45,8 @@ export function SuccessCard({ wallet, tx }: { wallet: Address; tx: VerifyRespons
         {tx ? 'View registration on HashScan' : 'View wallet on HashScan'}
       </a>
       <div>
-        <Link href="/onboard" className="btn btn-primary">
-          Onboard your first agent
+        <Link href="/dashboard" className="btn btn-primary">
+          Create an API key for your agents
         </Link>
       </div>
     </div>

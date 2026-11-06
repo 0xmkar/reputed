@@ -203,8 +203,8 @@ export function CreatorView({ address }: { address: string }) {
           </p>
         </div>
         {isOwner && (
-          <Link href="/onboard" className="btn btn-primary">
-            Onboard agent
+          <Link href="/dashboard" className="btn btn-primary">
+            Add agent
           </Link>
         )}
       </header>

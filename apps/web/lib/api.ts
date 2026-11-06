@@ -12,8 +12,8 @@ export class ApiRequestError extends Error {
 }
 
 /** GET a JSON endpoint on the Reputed server. Non-2xx responses throw ApiRequestError. */
-export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { signal });
+export async function apiGet<T>(path: string, signal?: AbortSignal, headers?: HeadersInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, { signal, headers });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ApiError | null;
     throw new ApiRequestError(res.status, body);

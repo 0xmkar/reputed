@@ -14,6 +14,7 @@ export interface RateLimits {
   verifyByIp: RateLimit;
   verifyByWallet: RateLimit;
   rpSignatureByIp: RateLimit;
+  sessionByIp: RateLimit;
   agentFileByIp: RateLimit;
   reviewFileByIp: RateLimit;
   reviewFileByClient: RateLimit;
@@ -30,6 +31,7 @@ export const DEFAULT_RATE_LIMITS: RateLimits = {
   verifyByIp: perMinute(20),
   verifyByWallet: perMinute(5),
   rpSignatureByIp: perMinute(30),
+  sessionByIp: perMinute(60),
   agentFileByIp: perMinute(30),
   reviewFileByIp: perMinute(20),
   reviewFileByClient: perMinute(10),

@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { HEDERA_TESTNET, IDENTITY_REGISTRY } from '@reputed/shared';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
@@ -90,6 +91,8 @@ const serverSchema = hederaSchema.extend({
   // IDKit refuses anything else in rp_context, even though the verify URL allows app_.
   WORLD_RP_ID: z.string().regex(/^rp_[0-9a-fA-F]{1,16}$/),
   RP_SIGNING_KEY: privateKey,
+  // Signs session tokens. Unset, one is derived from RP_SIGNING_KEY, which keeps it stable across restarts.
+  SESSION_SECRET: z.string().min(32).optional(),
   WORLD_ACTION: z.string().min(1).default('agent-creator-v1'),
   // Deliberately no defaults: accepting a staging proof in production, or both
   // protocol versions at once, breaks one-human-one-creator.
@@ -146,6 +149,7 @@ export interface AppConfig extends HederaConfig {
   reviewsTopicId: string;
   verifierDbPath: string;
   world: WorldConfig;
+  sessionSecret: string;
   reviewBudget: ReviewBudget;
 }
 
@@ -177,6 +181,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       environment: v.WORLD_ENVIRONMENT,
       protocolVersion: v.WORLD_PROTOCOL_VERSION,
     },
+    sessionSecret:
+      v.SESSION_SECRET ?? createHmac('sha256', v.RP_SIGNING_KEY).update('reputed:session:v1').digest('hex'),
     reviewBudget: {
       maxPerHour: v.REVIEW_MAX_PER_HOUR,
       maxConcurrent: v.REVIEW_MAX_CONCURRENT,

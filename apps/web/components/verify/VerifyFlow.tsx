@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import dynamic from 'next/dynamic';
-import { useAccount, useDisconnect } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { HEDERA_TESTNET, type Address } from '@reputed/shared';
 import { AddressChip } from '@/components/AddressChip';
 import { InlineError } from '@/components/InlineError';
 import { useToast } from '@/components/Toasts';
+import { useSignOut } from '@/lib/useIdentity';
 import { SuccessCard } from './SuccessCard';
 import { StepIndicator } from './StepIndicator';
 import { useCreatorStatus } from './useCreatorStatus';
@@ -42,7 +43,7 @@ export function VerifyLayout({ step, children }: { step: number; children: React
 /** Mount with `key={wallet}`: a different wallet starts over, because the proof is bound to this one. */
 export function VerifyFlow({ wallet }: { wallet: Address }) {
   const { chainId } = useAccount();
-  const { disconnect } = useDisconnect();
+  const signOut = useSignOut();
   const { toast } = useToast();
   const { phase, start, retry, onWorldResult, onWorldError, onWorldClosed } = useVerifyFlow(wallet);
 
@@ -89,7 +90,7 @@ export function VerifyFlow({ wallet }: { wallet: Address }) {
       <div className="verify-wallet">
         <AddressChip address={wallet} />
         <span>This wallet becomes your creator wallet</span>
-        <button type="button" className="verify-link" disabled={sending} onClick={() => disconnect()}>
+        <button type="button" className="verify-link" disabled={sending} onClick={signOut}>
           Use a different wallet
         </button>
       </div>

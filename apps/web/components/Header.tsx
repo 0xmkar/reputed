@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useAccount } from 'wagmi';
+import { useIdentity } from '@/lib/useIdentity';
 import { NetworkPill } from './NetworkPill';
 import { WalletButton } from './WalletButton';
 
 export function Header() {
-  const { address, isConnected } = useAccount();
+  const { address } = useIdentity();
   return (
     <header className="header">
       <div className="header-inner container">
@@ -15,12 +15,12 @@ export function Header() {
         </Link>
         <nav className="nav" aria-label="Main">
           <Link href="/explore">Explore</Link>
-          {isConnected && address && <Link href={`/creator/${address}`}>My agents</Link>}
-          {isConnected && <Link href="/dashboard">Dashboard</Link>}
+          {address && <Link href={`/creator/${address}`}>My agents</Link>}
+          {address && <Link href="/dashboard">Dashboard</Link>}
         </nav>
         <div className="header-right">
-          <Link href="/onboard" className="btn btn-primary">
-            Onboard agent
+          <Link href="/dashboard" className="btn btn-primary">
+            Add agent
           </Link>
           <NetworkPill />
           <WalletButton />

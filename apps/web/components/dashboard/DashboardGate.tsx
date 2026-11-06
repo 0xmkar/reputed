@@ -2,10 +2,10 @@
 
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { useAccount } from 'wagmi';
 import type { Address } from 'viem';
 import { creatorRegistryAbi } from '@reputed/shared';
 import { chainClient } from '@/lib/chainClient';
+import { useIdentity } from '@/lib/useIdentity';
 import { CREATOR_REGISTRY } from '@/lib/contracts';
 import { InlineError } from '../InlineError';
 import { WalletButton } from '../WalletButton';
@@ -22,7 +22,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 /** Verified creators only: the chain decides, so someone verified a moment ago gets in at once. */
 export function DashboardGate() {
-  const { address, status } = useAccount();
+  const { address, live, restoring } = useIdentity();
 
   const isCreator = useQuery({
     queryKey: ['is-creator', address],
@@ -33,7 +33,7 @@ export function DashboardGate() {
   });
 
   if (!address) {
-    if (status === 'connecting' || status === 'reconnecting') {
+    if (restoring) {
       return (
         <Shell>
           <div className="card" aria-busy="true">
@@ -87,7 +87,7 @@ export function DashboardGate() {
 
   return (
     <Shell>
-      <ApiKeys creator={address} />
+      <ApiKeys creator={address} canSign={live} />
     </Shell>
   );
 }

@@ -10,6 +10,7 @@ import { registerAgentFileRoute } from './routes/agentFile.ts';
 import { DEFAULT_RATE_LIMITS, type RateLimits } from './routes/rateLimits.ts';
 import { registerReviewFileRoute } from './routes/reviewFile.ts';
 import { registerRpSignatureRoute } from './routes/rpSignature.ts';
+import { registerSessionRoutes } from './routes/session.ts';
 import { registerVerifyRoute } from './routes/verify.ts';
 import { getScorerRuntime, type ScorerRuntime } from './indexer/runtime.ts';
 import { registerReadRoutes } from './scoring/routes.ts';
@@ -18,6 +19,8 @@ import type { WorldVerifier } from './world/client.ts';
 
 export interface AppDeps {
   world: WorldConfig;
+  /** Signs session tokens. */
+  sessionSecret: string;
   identityRegistry: Address;
   corsOrigins: string[];
   /** IPs or CIDRs of the proxies in front of the server. Empty when there are none. */
@@ -55,6 +58,7 @@ export async function buildApp(deps: AppDeps, options: AppOptions = {}): Promise
   const rateLimits = { ...DEFAULT_RATE_LIMITS, ...options.rateLimits };
   registerRpSignatureRoute(app, deps.world, rateLimits);
   registerVerifyRoute(app, { ...deps, rateLimits });
+  registerSessionRoutes(app, { secret: deps.sessionSecret, rateLimits });
   registerAgentFileRoute(app, rateLimits);
   registerReviewFileRoute(app, {
     identityRegistry: deps.identityRegistry,

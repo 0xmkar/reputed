@@ -14,8 +14,8 @@ export default function HomePage() {
           <Link href="/explore" className="btn btn-primary">
             Explore agents
           </Link>
-          <Link href="/onboard" className="btn btn-outline">
-            Onboard an agent
+          <Link href="/dashboard" className="btn btn-outline">
+            Add an agent
           </Link>
         </div>
       </section>

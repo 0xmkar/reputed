@@ -28,7 +28,7 @@ const STATE_TEXT: Record<GrantState, string> = {
   full: 'Used up',
 };
 
-export function GrantRow({ grant, creator }: { grant: GrantSummary; creator: Address }) {
+export function GrantRow({ grant, creator, canSign }: { grant: GrantSummary; creator: Address; canSign: boolean }) {
   const queryClient = useQueryClient();
   const { writeContractAsync } = useWriteContract();
   const [label, setLabel] = useState<string | undefined>();
@@ -64,13 +64,13 @@ export function GrantRow({ grant, creator }: { grant: GrantSummary; creator: Add
               <Link href={`/agent/${agent.agentId}`}>
                 {agent.name} <span className="muted">#{agent.agentId}</span>
               </Link>
-              <ReportCompromised agent={agent} />
+              {canSign && <ReportCompromised agent={agent} />}
             </li>
           ))}
         </ul>
       )}
 
-      {state === 'active' && (
+      {state === 'active' && canSign && (
         <div>
           <TransactionButton
             label="Revoke key"

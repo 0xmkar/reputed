@@ -28,7 +28,7 @@ function Hero({ agent }: { agent: AgentDetail }) {
     <header className="agent-hero">
       {image ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img className="agent-image agent-image-lg" src={image} alt="" width={96} height={96} />
+        <img className="agent-image agent-image-lg" src={image} alt="" width={96} height={96} referrerPolicy="no-referrer" />
       ) : (
         <span className="agent-image agent-image-lg agent-image-fallback" aria-hidden="true">
           {agent.name.slice(0, 1).toUpperCase()}
@@ -207,7 +207,8 @@ function AgentSkeleton() {
 export function AgentView({ agentId }: { agentId: string }) {
   const { data: agent, isLoading, error, refetch } = useAgent(agentId);
 
-  if (error) return <InlineError message="Couldn’t load this agent. The server may be down." onRetry={() => void refetch()} />;
+  // Keep showing the agent if only a background refresh failed.
+  if (error && !agent) return <InlineError message="Couldn’t load this agent. The server may be down." onRetry={() => void refetch()} />;
   if (agent === null || !/^\d+$/.test(agentId)) {
     return <EmptyState message="This agent doesn’t exist." action={{ label: 'Explore agents', href: '/explore' }} />;
   }

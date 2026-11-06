@@ -1,4 +1,4 @@
-import { hashscan, type ExclusionReason, type Review } from '@reputed/shared';
+import { hashscan, type ExclusionReason, type Review, type ReviewResponse } from '@reputed/shared';
 import { formatDate } from '@/lib/format';
 import { AddressChip } from './AddressChip';
 import { CheckIcon, CrossIcon } from './icons';
@@ -21,7 +21,7 @@ function reviewFileHref(uri: string): string | null {
 }
 
 function ReviewResponseBlock({ response }: { response: ReviewResponse }) {
-  const file = fileHref(response.uri);
+  const file = reviewFileHref(response.uri);
   return (
     <div className="review-response">
       <div className="row muted">

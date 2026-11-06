@@ -11,6 +11,7 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 | [Features List](docs/03-features.md) | 58 features in 8 groups, with IDs, priority (MVP / Next / Later) and phase |
 | [UI Elements](docs/04-ui-elements.md) | Screen map, global elements, 6 screens, shared components and states |
 | [Work Split](docs/05-work-split.md) | Who owns each phase, Swapnil's task list, and the rules for working in parallel |
+| [Testnet Runbook](docs/06-testnet-runbook.md) | The ordered steps from a funded operator to a live server, and which plan tests each step unlocks |
 
 ## Stack
 

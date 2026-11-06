@@ -10,9 +10,14 @@ export type ApiErrorCode =
   | 'ALREADY_REGISTERED'
   | 'WALLET_TAKEN'
   | 'WORLD_UNAVAILABLE'
-  | 'CHAIN_ERROR';
+  | 'CHAIN_ERROR'
+  | 'INTERNAL_ERROR';
 
-/** Every non-2xx response has this body. */
+/**
+ * Every non-2xx response has this body. RATE_LIMITED arrives as HTTP 429, or as 503 when a
+ * server-wide budget is spent: posting reviews, or looking up agents not scored yet. Both carry a
+ * retry-after header.
+ */
 export interface ApiError {
   code: ApiErrorCode;
   message: string;
@@ -57,9 +62,10 @@ export interface Credential {
   serial: number;
   kind: 'human-backed' | 'milestone';
   title: string;
-  issuer?: string;
   issuedAt: string;
   revoked: boolean;
+  /** CreatorRegistry, which issues every credential. */
+  issuer: Address;
 }
 
 export type ExclusionReason =
@@ -67,11 +73,14 @@ export type ExclusionReason =
   | 'hash-mismatch'
   | 'not-human-backed'
   | 'payment-not-found'
-  | 'same-creator';
+  | 'same-creator'
+  | 'invalid-value'; // on-chain value outside 0-100
 
+/** The latest reply from the agent's owner or wallet. Anyone can append a response on-chain. */
 export interface ReviewResponse {
   responder: Address;
   uri: string;
+  hash: `0x${string}`;
   text?: string;
   createdAt: string;
 }
@@ -105,7 +114,7 @@ export interface AgentDetail extends AgentSummary {
   penaltiesConfirmed: number;
   updatedAt: string;
   snapshotUrl?: string;
-  /** True when the latest snapshot is 2 or more epochs old. */
+  /** See AgentListResponse.scoresStale. */
   scoresStale: boolean;
 }
 
@@ -137,14 +146,103 @@ export interface CreatorDetail {
 
 export interface AgentQuery {
   q?: string;
+  /** true shows only human-backed agents. false or missing applies no filter. */
   humanBacked?: boolean;
   minScore?: number;
+  /**
+   * Only agents this wallet owns now. An agent it has not linked yet has `creator: null`, which is
+   * how onboarding finds where to resume. Wallets that are not verified creators get no unlinked agents.
+   * An agent a stranger minted and transferred to this wallet is left out until the wallet links it.
+   */
+  owner?: Address;
 }
 
 export interface AgentListResponse {
+  /** Linked agents, plus agents minted by verified creators and not linked yet (`creator: null`). */
   agents: AgentSummary[];
-  /** Global totals from the latest snapshot. They do not change with the query filters. */
+  /** Global totals over every listed agent. They do not change with the query filters. */
   stats: { agents: number; humanBacked: number; creators: number; reviewsCounted: number };
-  /** True when the latest snapshot is 2 or more epochs old. */
+  /**
+   * True when the latest snapshot is 2 or more epochs old. Before the first snapshot it is false for
+   * two epochs from the server's first start, then true until one is published.
+   */
   scoresStale: boolean;
+}
+
+/** POST /api/rp-signature, with no body or `{}`. Start here: the nonce feeds the next two steps. */
+export interface RpSignatureResponse {
+  /** Pass straight to IDKit as `rp_context`. */
+  rp_context: {
+    rp_id: string;
+    nonce: string;
+    created_at: number;
+    expires_at: number;
+    signature: string;
+  };
+  action: string;
+  environment: 'production' | 'staging' | 'sandbox';
+  /** The only protocol version POST /api/verify accepts. */
+  protocol_version: '3.0' | '4.0';
+}
+
+/** POST /api/verify. Pass the wallet to IDKit as its 0x-prefixed signal. */
+export interface VerifyRequest {
+  wallet: Address;
+  /** EIP-191 signature by `wallet` over walletBindingMessage(wallet, action, nonce). */
+  walletSignature: `0x${string}`;
+  /** The IDKit result, unmodified. */
+  idkitResponse: unknown;
+}
+
+export interface VerifyResponse {
+  transactionHash: `0x${string}`;
+  /** Mirror form 0.0.x-seconds-nanos. Null if the Mirror Node has not indexed it within about 10 s. */
+  transactionId: string | null;
+  wallet: Address;
+  nullifierHash: `0x${string}`;
+}
+
+/** POST /api/agent-file: an ERC-8004 registration file. Extra fields are kept in the file. */
+export interface AgentFileRequest {
+  type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1';
+  name: string;
+  description: string; // may be empty
+  image: string; // may be empty
+  services: { name: string; endpoint: string; version?: string }[]; // at least one
+  x402Support: boolean;
+  active: boolean;
+  registrations: { agentId: string | number; agentRegistry: string }[]; // may be empty
+  supportedTrust?: string[];
+  [extra: string]: unknown;
+}
+
+export interface AgentFileResponse {
+  uri: string;
+  hash: `0x${string}`;
+}
+
+/** Serialised by serializeReviewFile, and must stay under 1,024 bytes. */
+export interface ReviewFile {
+  agentRegistry: string; // CAIP-10: eip155:296:0x...
+  agentId: string | number;
+  clientAddress: string; // CAIP-10: eip155:296:0x...
+  createdAt: string; // ISO 8601
+  value: number; // whole number, 0-100
+  valueDecimals: 0;
+  tag1: 'quality' | 'misconduct';
+  tag2: string; // ^[a-z0-9-]{1,32}$
+  endpoint: string;
+  comment?: string;
+  proofOfPayment?: string;
+}
+
+/** POST /api/review-file. Unknown fields are rejected. */
+export interface ReviewFileRequest extends ReviewFile {
+  /** EIP-191 signature by clientAddress over serializeReviewFile(file). Never published. */
+  signature: `0x${string}`;
+}
+
+export interface ReviewFileResponse {
+  feedbackUri: string;
+  feedbackHash: `0x${string}`;
 }

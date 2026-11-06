@@ -15,6 +15,7 @@ import { InlineError } from './InlineError';
 import { ReviewList } from './ReviewList';
 import { ReviewSlot } from './ReviewSlot';
 import { ScoreRing } from './ScoreRing';
+import { StaleScoresChip } from './StaleScoresChip';
 import { TierBadge } from './TierBadge';
 
 function capitalise(text: string): string {
@@ -212,8 +213,16 @@ export function AgentView({ agentId }: { agentId: string }) {
   }
   if (isLoading || !agent) return <AgentSkeleton />;
 
+  // The badge links to the first credential of kind human-backed that has not been revoked.
+  const humanBackedCredential = agent.credentials.find((c) => c.kind === 'human-backed' && !c.revoked);
+
   return (
     <article className="agent-page">
+      {agent.scoresStale && (
+        <div>
+          <StaleScoresChip updatedAt={agent.updatedAt} />
+        </div>
+      )}
       {agent.compromisedAt && (
         <div className="banner-inline banner-danger" role="alert">
           Marked compromised on {formatDate(agent.compromisedAt)}. Treat this agent with caution.
@@ -228,7 +237,7 @@ export function AgentView({ agentId }: { agentId: string }) {
       <Hero agent={agent} />
       {agent.humanBacked && (
         <div>
-          <HumanBackedBadge />
+          <HumanBackedBadge credential={humanBackedCredential} />
         </div>
       )}
 

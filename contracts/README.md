@@ -238,3 +238,5 @@ Deployed 2026-11-06. Source verified on Sourcify with an exact creation and runt
 | T1.9 | Passed. Serials removed, supply back to 0, holder still FROZEN |
 
 Real gas: deploy 1,988,234. `issueCredential` to an already associated wallet 369,368. `revokeCredential` 83,081. `registerCreator` 71,089.
+
+Phase 3 passed on testnet with `server/scripts/testnet-phase3.ts`, using two test-only creators registered directly with the verifier key, not through World ID. T3.1–T3.5 and T3.7–T3.9 passed, and T3.6 was not run. Agents 159, 160 and 162 belong to the first test creator, and 163 to the second. Real gas: `register` 454,322, `linkAgent` 1,208,089 with auto-association and 503,376 without.

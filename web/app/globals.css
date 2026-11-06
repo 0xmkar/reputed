@@ -228,3 +228,8 @@ h2 { font-size: 1.25rem; margin: 0; }
 .banner-inline { padding: 10px 14px; border-radius: var(--radius); background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); }
 .banner-danger { background: var(--error-bg); border-color: var(--error); color: var(--error); }
 details summary { cursor: pointer; }
+
+.review-response { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.review-response p { margin: 0; }
+
+.stale-chip { display: inline-block; margin-top: 16px; }

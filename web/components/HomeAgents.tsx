@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useAgents } from '@/lib/useAgents';
 import { AgentGrid } from './AgentGrid';
 import { EmptyState } from './EmptyState';
+import { StaleScoresChip } from './StaleScoresChip';
 import { StatsStrip } from './StatsStrip';
 
 const FEATURED_COUNT = 9;
@@ -14,6 +15,7 @@ export function HomeAgents() {
 
   return (
     <>
+      {data?.scoresStale && <StaleScoresChip />}
       <StatsStrip stats={data?.stats} />
       <div className="section-head">
         <h2>Human-backed agents</h2>

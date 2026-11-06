@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import type { AgentDetail } from '@reputed/shared';
+import { loadPaymentAttempt, loadReviewAttempt } from './review/attempts';
 import { ReviewModal } from './review/ReviewModal';
 
 const POLL_MS = 2_000;
@@ -66,10 +67,19 @@ export function ReviewSlot({ agent }: { agent: AgentDetail }) {
   const [open, setOpen] = useState(false);
   // The form mounts on first open, and starts empty again after a confirmed review.
   const [form, setForm] = useState({ mounted: false, key: 0, confirmed: false });
+  const [unfinished, setUnfinished] = useState(false);
   const arrival = useReviewArrival(agent);
   const isOwner = address !== undefined && address.toLowerCase() === agent.owner.toLowerCase();
 
+  // A review or payment from before a reload: mounting the form picks it up and goes on watching it.
+  useEffect(() => {
+    const found = address !== undefined && (loadReviewAttempt(address, agent.agentId) !== null || loadPaymentAttempt(address, agent.agentId) !== null);
+    setUnfinished(found);
+    if (found) setForm((f) => ({ ...f, mounted: true }));
+  }, [address, agent.agentId]);
+
   function onConfirmed(reviewsBefore: number) {
+    setUnfinished(false);
     setForm((f) => ({ ...f, confirmed: true }));
     if (address) arrival.watchFor(address, reviewsBefore);
   }
@@ -87,6 +97,7 @@ export function ReviewSlot({ agent }: { agent: AgentDetail }) {
         disabled={isOwner}
         title={isOwner ? 'You can’t review your own agent.' : undefined}
         onClick={() => {
+          setUnfinished(false);
           setForm((f) => ({ ...f, mounted: true }));
           setOpen(true);
         }}
@@ -94,6 +105,11 @@ export function ReviewSlot({ agent }: { agent: AgentDetail }) {
         Leave a review
       </button>
       {isOwner && <span className="muted review-slot-note">You can’t review your own agent.</span>}
+      {unfinished && (
+        <span className="muted review-slot-note" role="status">
+          Your last review or payment here may still be going through. Open Leave a review to see it.
+        </span>
+      )}
       {arrival.waiting && (
         <span className="muted review-slot-note" role="status">
           {arrival.slow ? 'Taking longer than usual to index your review.' : 'Your review is confirmed. Adding it to the list…'}{' '}

@@ -21,13 +21,13 @@ export function agentIdFromLogs(logs: TxLog[]): string | null {
   return topic === undefined ? null : BigInt(topic).toString();
 }
 
-/** The credential serial from AgentLinked, or null if these logs hold none. */
-export function serialFromLogs(logs: TxLog[]): number | null {
+/** The credential serial from this agent's AgentLinked log, or null if these logs hold none. */
+export function serialFromLogs(logs: TxLog[], agentId: string): number | null {
   for (const log of logs) {
     if (!from(log, CREATOR_REGISTRY)) continue;
     try {
       const event = decodeEventLog({ abi: creatorRegistryAbi, topics: log.topics as [], data: log.data });
-      if (event.eventName === 'AgentLinked') return Number(event.args.serial);
+      if (event.eventName === 'AgentLinked' && event.args.agentId === BigInt(agentId)) return Number(event.args.serial);
     } catch {
       // Not an event of this contract's ABI, so it cannot be AgentLinked.
     }

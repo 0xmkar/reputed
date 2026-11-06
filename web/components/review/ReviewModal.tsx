@@ -17,11 +17,14 @@ import {
 } from '@reputed/shared';
 import { CREATOR_REGISTRY, GAS } from '@/lib/contracts';
 import { useDebounced } from '@/lib/useDebounced';
+import { NotSentError } from '@/lib/walletError';
 import { CostHint } from '../CostHint';
 import { InlineError } from '../InlineError';
-import { TransactionButton } from '../TransactionButton';
+import { TransactionButton, type TxPhase } from '../TransactionButton';
 import { WalletButton } from '../WalletButton';
+import { clearReviewAttempt, loadReviewAttempt, saveReviewAttempt, type ReviewAttempt } from './attempts';
 import { Dialog, DialogDone } from './Dialog';
+import { findFeedback } from './mirror';
 import { PaymentField } from './PaymentField';
 import {
   MAX_COMMENT_LENGTH,
@@ -96,27 +99,42 @@ function citedProof(state: PaymentState): string | undefined {
 interface FormProps {
   agent: AgentDetail;
   client: Address;
+  /** True while the dialog should not close: something is waiting on the wallet or on Hedera. */
   onBusyChange: (busy: boolean) => void;
+  /** True while this form holds work a disconnected wallet must not take away. */
+  onHoldChange: (hold: boolean) => void;
   /** Gets how many reviews this wallet had when it sent this one, to spot the new one in the API. */
   onConfirmed: (reviewsBefore: number) => void;
   onClose: () => void;
 }
 
-function ReviewForm({ agent, client, onBusyChange, onConfirmed, onClose }: FormProps) {
+function ReviewForm({ agent, client, onBusyChange, onHoldChange, onConfirmed, onClose }: FormProps) {
   const endpoints = useMemo(() => agentEndpoints(agent), [agent]);
-  const [value, setValue] = useState(50);
-  const [tag1, setTag1] = useState<ReviewFile['tag1']>('quality');
-  const [qualityCategory, setQualityCategory] = useState<string>(QUALITY_CATEGORIES[0].value);
-  const [misconductCategory, setMisconductCategory] = useState<string>(MISCONDUCT_CATEGORIES[0].value);
-  const [endpoint, setEndpoint] = useState(endpoints[0]?.value ?? '');
-  const [comment, setComment] = useState('');
+  // Read once: a reload lands here with the review still on its way, or with its outcome unknown.
+  const [resumed] = useState(() => loadReviewAttempt(client, agent.agentId));
+  const restored = resumed?.draft;
+  const [value, setValue] = useState(restored?.value ?? 50);
+  const [tag1, setTag1] = useState<ReviewFile['tag1']>(restored?.tag1 ?? 'quality');
+  const [qualityCategory, setQualityCategory] = useState<string>(
+    restored?.tag1 === 'quality' ? restored.tag2 : QUALITY_CATEGORIES[0].value,
+  );
+  const [misconductCategory, setMisconductCategory] = useState<string>(
+    restored?.tag1 === 'misconduct' ? restored.tag2 : MISCONDUCT_CATEGORIES[0].value,
+  );
+  const [endpoint, setEndpoint] = useState(restored?.endpoint ?? endpoints[0]?.value ?? '');
+  const [comment, setComment] = useState(restored?.comment ?? '');
   const [selected, setSelected] = useState('');
-  const [pasted, setPasted] = useState('');
+  const [pasted, setPasted] = useState(restored?.proofOfPayment ?? '');
   const [step, setStep] = useState<Step | null>(null);
-  const [tx, setTx] = useState<'idle' | 'confirming' | 'confirmed'>('idle');
+  const [phase, setPhase] = useState<TxPhase>('idle');
   const [paymentSending, setPaymentSending] = useState(false);
-  const reviewsBefore = useRef(0);
-  const uploaded = useRef<{ key: string; response: ReviewFileResponse } | null>(null);
+  const reviewsBefore = useRef(resumed?.reviewsBefore ?? 0);
+  const attempt = useRef<ReviewAttempt | null>(resumed);
+  // Set once this send reaches the wallet. Stopping sooner leaves any earlier attempt's record alone.
+  const walletAsked = useRef(false);
+  const uploaded = useRef<{ key: string; response: ReviewFileResponse } | null>(
+    resumed ? { key: JSON.stringify(resumed.draft), response: resumed.upload } : null,
+  );
 
   const { signMessageAsync } = useSignMessage();
   const { writeContractAsync } = useWriteContract();
@@ -139,25 +157,57 @@ function ReviewForm({ agent, client, onBusyChange, onConfirmed, onClose }: FormP
   const bytes = draftBytes(draft);
   const tooLong = bytes >= MAX_FILE_BYTES;
 
-  const busy = step !== null || tx === 'confirming';
+  const busy = step !== null || phase === 'signing' || phase === 'confirming';
+  const locked = busy || phase === 'unknown';
+  const hold = locked || phase === 'done';
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+  useEffect(() => onHoldChange(hold), [hold, onHoldChange]);
+  useEffect(
+    () => () => {
+      onBusyChange(false);
+      onHoldChange(false);
+    },
+    [onBusyChange, onHoldChange],
+  );
+
+  function forget() {
+    attempt.current = null;
+    clearReviewAttempt(client, agent.agentId);
+  }
+
+  function finished() {
+    forget();
+    onConfirmed(reviewsBefore.current);
+  }
+
+  /** The published file, reused on a retry unless the form changed. Nothing is on-chain yet at this point. */
+  async function publish(key: string): Promise<ReviewFileResponse> {
+    if (uploaded.current?.key === key) return uploaded.current.response;
+    try {
+      const file = buildReviewFile(draft, new Date());
+      setStep('sign-file');
+      const signature = await signMessageAsync({ account: client, message: { raw: serializeReviewFile(file) } });
+      setStep('upload');
+      const response = await postReviewFile(file, signature);
+      uploaded.current = { key, response };
+      return response;
+    } catch (err) {
+      throw new NotSentError(err);
+    }
+  }
 
   async function submit(): Promise<Hash> {
     reviewsBefore.current = agent.reviews.filter((r) => r.clientAddress.toLowerCase() === client.toLowerCase()).length;
+    walletAsked.current = false;
     try {
-      // A retry after the wallet refuses the transaction reuses the published file, unless the form changed.
-      const key = JSON.stringify(draft);
-      let upload = uploaded.current?.key === key ? uploaded.current.response : null;
-      if (!upload) {
-        const file = buildReviewFile(draft, new Date());
-        setStep('sign-file');
-        const signature = await signMessageAsync({ message: { raw: serializeReviewFile(file) } });
-        setStep('upload');
-        upload = await postReviewFile(file, signature);
-        uploaded.current = { key, response: upload };
-      }
+      const upload = await publish(JSON.stringify(draft));
+      attempt.current = { startedAt: Date.now(), reviewsBefore: reviewsBefore.current, draft, upload };
+      saveReviewAttempt(client, agent.agentId, attempt.current);
+      walletAsked.current = true;
       setStep('sign-tx');
+      // The file names this wallet, so the transaction must come from it even if the wallet has moved on.
       return await writeContractAsync({
+        account: client,
         address: REPUTATION_REGISTRY,
         abi: reputationRegistryAbi,
         functionName: 'giveFeedback',
@@ -177,20 +227,21 @@ function ReviewForm({ agent, client, onBusyChange, onConfirmed, onClose }: FormP
 
   return (
     <>
-      <fieldset className="review-fields" disabled={busy} hidden={tx === 'confirmed'}>
+      <fieldset className="review-fields" disabled={locked} hidden={phase === 'done'}>
         {isOwner ? <InlineError message="You can’t review your own agent." /> : <Eligibility agent={agent} client={client} />}
 
         <PaymentField
           agent={agent}
+          client={client}
           check={payment}
           selected={selected}
           pasted={pasted}
           onSelect={setSelected}
           onPaste={setPasted}
           onSending={setPaymentSending}
-          onPaid={(hash) => {
+          onPaid={(proof) => {
             setSelected('');
-            setPasted(hash);
+            setPasted(proof);
           }}
         />
 
@@ -315,7 +366,7 @@ function ReviewForm({ agent, client, onBusyChange, onConfirmed, onClose }: FormP
         </div>
       </fieldset>
 
-      <div className={`review-submit${step ? ' has-step' : ''}${tx === 'confirmed' ? ' tx-finished' : ''}`}>
+      <div className={`review-submit${step ? ' has-step' : ''}${phase === 'done' ? ' tx-finished' : ''}`}>
         {step && (
           <p className="tx-note" role="status">
             {STEP_TEXT[step]}
@@ -324,16 +375,29 @@ function ReviewForm({ agent, client, onBusyChange, onConfirmed, onClose }: FormP
         <TransactionButton
           label="Submit review"
           disabled={!canSubmit}
+          resendRisk="Submitting again could post a second review."
+          resumeHash={resumed?.hash}
+          resumeStartedAt={resumed && !resumed.hash ? resumed.startedAt : undefined}
           onSend={submit}
-          onSubmitted={() => setTx('confirming')}
-          onFailed={() => setTx('idle')}
-          onConfirmed={() => {
-            setTx('confirmed');
-            onConfirmed(reviewsBefore.current);
+          onSubmitted={(hash) => {
+            if (!attempt.current) return;
+            attempt.current = { ...attempt.current, hash };
+            saveReviewAttempt(client, agent.agentId, attempt.current);
           }}
+          onFailed={forget}
+          onNotSent={() => {
+            if (walletAsked.current) forget();
+          }}
+          onConfirmed={finished}
+          findSent={(signal) => {
+            const sent = attempt.current;
+            return sent ? findFeedback(agent.agentId, client, sent.upload.feedbackHash, sent.startedAt, signal) : Promise.resolve(null);
+          }}
+          onFound={finished}
+          onPhase={setPhase}
         />
-        {tx === 'idle' && <CostHint usd={0.02} />}
-        {tx === 'confirmed' && (
+        {phase === 'idle' && <CostHint usd={0.02} />}
+        {phase === 'done' && (
           <>
             <p className="muted">Your review is on Hedera. It joins the list below once it’s indexed, usually within a minute.</p>
             <DialogDone onClose={onClose} />
@@ -354,16 +418,33 @@ interface Props {
 
 export function ReviewModal({ agent, client, open, onClose, onConfirmed }: Props) {
   const [busy, setBusy] = useState(false);
+  const [hold, setHold] = useState(false);
+  // A wallet that disconnects mid-review must not take the form with it: its watcher is what finishes the job.
+  const [lastClient, setLastClient] = useState(client);
+  if (client && client !== lastClient) setLastClient(client);
+  const formClient = client ?? (hold ? lastClient : undefined);
+  // Disconnected, nothing here can move on by itself, so closing has to stay possible.
+  const closeBlocked = busy && client !== undefined;
+
   return (
-    <Dialog open={open} onClose={onClose} busy={busy} labelledBy="review-title" className="dialog-review">
+    <Dialog open={open} onClose={onClose} busy={closeBlocked} labelledBy="review-title" className="dialog-review">
       <header className="dialog-head">
         <h2 id="review-title">Review {agent.name}</h2>
-        <button type="button" className="toast-close" aria-label="Close" disabled={busy} onClick={onClose}>
+        <button type="button" className="toast-close" aria-label="Close" disabled={closeBlocked} onClick={onClose}>
           ×
         </button>
       </header>
-      {client ? (
-        <ReviewForm agent={agent} client={client} onBusyChange={setBusy} onConfirmed={onConfirmed} onClose={onClose} />
+      {formClient ? (
+        // Keyed by wallet: another wallet's form must not show this one's review in progress.
+        <ReviewForm
+          key={formClient}
+          agent={agent}
+          client={formClient}
+          onBusyChange={setBusy}
+          onHoldChange={setHold}
+          onConfirmed={onConfirmed}
+          onClose={onClose}
+        />
       ) : (
         <div className="row">
           <p className="muted">Connect your wallet to leave a review.</p>

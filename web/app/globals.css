@@ -391,3 +391,8 @@ details summary { cursor: pointer; }
   .onboard-link { padding: 8px 0; }
   .onboard-tag-remove { padding: 4px 8px; }
 }
+
+/* Sends with an unknown outcome */
+.tx-status { max-width: 100%; overflow-wrap: anywhere; }
+.tx-unknown { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.tx-unknown > span { min-width: 0; }

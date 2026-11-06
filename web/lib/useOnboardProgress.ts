@@ -14,6 +14,8 @@ export type OnboardProgress =
   /** Nothing on the chain yet. */
   | { state: 'none' }
   | { state: 'register-pending'; hash: Hash }
+  /** The wallet was asked to register and no hash came back, and the Mirror Node has nothing so far. */
+  | { state: 'register-unknown' }
   | { state: 'register-failed'; reason: string }
   /** Registered, owned by this wallet, and not linked: resume at the Link step. */
   | { state: 'unlinked'; agentId: string }
@@ -71,7 +73,8 @@ async function readProgress(wallet: Address, draft: OnboardDraft, signal: AbortS
 
   if (draft.registerStartedAt !== undefined && draft.pendingUri) {
     const agentId = await findRegistration(wallet, draft.pendingUri, draft.registerStartedAt, signal);
-    if (agentId !== null) return checkAgent(wallet, agentId);
+    // Absent from the Mirror Node is not the same as never sent: it lags, and the wallet may still be open.
+    return agentId === null ? { state: 'register-unknown' } : checkAgent(wallet, agentId);
   }
   return { state: 'none' };
 }

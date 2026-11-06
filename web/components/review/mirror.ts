@@ -1,5 +1,5 @@
-import { HEDERA_TESTNET, type Address } from '@reputed/shared';
-import { formatUnits } from 'viem';
+import { HEDERA_TESTNET, REPUTATION_REGISTRY, reputationRegistryAbi, type Address } from '@reputed/shared';
+import { decodeEventLog, formatUnits, numberToHex, pad, toEventSelector, type Hash, type Hex } from 'viem';
 
 // Everything the review flow reads from the Mirror Node, and the rules the scorer applies to what
 // comes back. The tick in the form has to mean what the scorer will later decide, so the ID parsing
@@ -196,6 +196,52 @@ export async function fetchRecentPayments(parties: PaymentParties, signal?: Abor
     if (check.ok && check.payment.asset === 'HBAR') payments.push(check.payment);
   }
   return payments.sort((a, b) => consensusToMs(b.consensusTimestamp) - consensusToMs(a.consensusTimestamp));
+}
+
+// A send that returned no hash is searched for from a little before it started, as this device's
+// clock and Hedera's can differ.
+const SEARCH_MARGIN_MS = 60_000;
+const MAX_SEARCH_MS = 6 * 24 * 3600 * 1000; // The Mirror Node allows a topic search over at most 7 days.
+
+/**
+ * A payment of exactly this amount from the reviewer to the agent, made since the send started, or
+ * null if there is none. Payments already cited by a review are skipped, as they are older sends.
+ */
+export async function findSentPayment(
+  parties: PaymentParties,
+  tinybars: bigint,
+  sinceMs: number,
+  used: ReadonlySet<string>,
+  signal?: AbortSignal,
+): Promise<VerifiedPayment | null> {
+  const notBeforeMs = Math.max(parties.notBeforeMs, sinceMs - SEARCH_MARGIN_MS);
+  const payments = await fetchRecentPayments({ ...parties, notBeforeMs }, signal);
+  const amount = `${formatUnits(tinybars, 8)} HBAR`;
+  return payments.find((payment) => payment.amount === amount && !used.has(payment.txId)) ?? null;
+}
+
+const NEW_FEEDBACK = toEventSelector('NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,string,bytes32)');
+
+/** Whether this wallet's review with this file hash is on-chain. Throws if the Mirror Node can't say. */
+export async function findFeedback(agentId: string, client: Address, feedbackHash: Hash, sinceMs: number, signal?: AbortSignal): Promise<true | null> {
+  const from = Math.floor((sinceMs - SEARCH_MARGIN_MS) / 1000);
+  const to = Math.min(Math.ceil((Date.now() + SEARCH_MARGIN_MS) / 1000), from + MAX_SEARCH_MS / 1000);
+  const query = new URLSearchParams({
+    topic0: NEW_FEEDBACK,
+    topic1: numberToHex(BigInt(agentId), { size: 32 }),
+    topic2: pad(client.toLowerCase() as Hex),
+    order: 'desc',
+    limit: '25',
+  });
+  const res = await request(`/api/v1/contracts/${REPUTATION_REGISTRY}/results/logs?${query}&timestamp=gte:${from}&timestamp=lte:${to}`, signal);
+  if (!res.ok) throw new MirrorUnavailableError();
+  const body = (await res.json()) as { logs?: { topics: Hex[]; data: Hex | null }[] };
+
+  for (const { topics, data } of body.logs ?? []) {
+    const event = decodeEventLog({ abi: reputationRegistryAbi, eventName: 'NewFeedback', topics: topics as [Hex, ...Hex[]], data: data ?? '0x' });
+    if (event.args.feedbackHash.toLowerCase() === feedbackHash.toLowerCase()) return true;
+  }
+  return null;
 }
 
 const HCS_URI = /^hcs:\/\/(\d+\.\d+\.\d+)\/(\d+)$/;

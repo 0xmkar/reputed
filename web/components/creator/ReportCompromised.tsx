@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useReadContract, useWriteContract } from 'wagmi';
 import { HEDERA_TESTNET, creatorRegistryAbi, type AgentSummary } from '@reputed/shared';
+import { chainClient } from '@/lib/chainClient';
 import { CREATOR_REGISTRY, GAS } from '@/lib/contracts';
 import { CostHint } from '../CostHint';
-import { TransactionButton } from '../TransactionButton';
+import { TransactionButton, type TxPhase } from '../TransactionButton';
 import { Dialog, DialogDone } from '../review/Dialog';
 
 const POLL_MS = 2_000;
@@ -20,7 +21,7 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
   const queryClient = useQueryClient();
   const { writeContractAsync } = useWriteContract();
   const [open, setOpen] = useState(false);
-  const [tx, setTx] = useState<'idle' | 'confirming' | 'confirmed'>('idle');
+  const [phase, setPhase] = useState<TxPhase>('idle');
   const cancel = useRef<HTMLButtonElement>(null);
   const done = useRef<HTMLSpanElement>(null);
   const agentId = BigInt(agent.agentId);
@@ -36,7 +37,7 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
     query: { enabled: agent.status !== 'compromised' },
   });
 
-  const reported = tx === 'confirmed';
+  const reported = phase === 'done';
 
   // The table's Status column comes from the API, so refetch until the report has been indexed.
   const indexed = agent.status === 'compromised';
@@ -51,6 +52,13 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
       clearTimeout(stop);
     };
   }, [reported, indexed, queryClient]);
+
+  const refreshAgent = () => void queryClient.invalidateQueries({ queryKey: ['agent', agent.agentId] });
+
+  async function findReport(): Promise<true | null> {
+    const at = await chainClient.readContract({ address: CREATOR_REGISTRY, abi: creatorRegistryAbi, functionName: 'compromisedAt', args: [agentId] });
+    return at !== 0n ? true : null;
+  }
 
   function close() {
     setOpen(false);
@@ -76,7 +84,7 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
       <Dialog
         open={open}
         onClose={close}
-        busy={tx === 'confirming'}
+        busy={phase === 'confirming'}
         labelledBy={titleId}
         describedBy={textId}
         initialFocus={cancel}
@@ -98,19 +106,17 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
                 chainId: HEDERA_TESTNET.id,
               })
             }
-            onSubmitted={() => setTx('confirming')}
-            onFailed={() => setTx('idle')}
-            onConfirmed={() => {
-              setTx('confirmed');
-              void queryClient.invalidateQueries({ queryKey: ['agent', agent.agentId] });
-            }}
+            onPhase={setPhase}
+            onConfirmed={refreshAgent}
+            findSent={findReport}
+            onFound={refreshAgent}
           />
         </div>
-        {tx === 'idle' && <CostHint usd={0.01} />}
+        {phase === 'idle' && <CostHint usd={0.01} />}
         {reported ? (
           <DialogDone onClose={close} />
         ) : (
-          <button ref={cancel} type="button" className="btn btn-outline" disabled={tx === 'confirming'} onClick={close}>
+          <button ref={cancel} type="button" className="btn btn-outline" disabled={phase === 'confirming'} onClick={close}>
             Cancel
           </button>
         )}

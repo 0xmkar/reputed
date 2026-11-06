@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Providers } from '@/components/Providers';
 import { Header } from '@/components/Header';
 import { WrongNetworkBanner } from '@/components/WrongNetworkBanner';
+import { WalletAccountBanner } from '@/components/WalletAccountBanner';
 import { ResumeBanner } from '@/components/ResumeBanner';
 import { Footer } from '@/components/Footer';
 import './globals.css';
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Providers>
           <Header />
           <WrongNetworkBanner />
+          <WalletAccountBanner />
           <ResumeBanner />
           <main className="container main">{children}</main>
           <Footer />

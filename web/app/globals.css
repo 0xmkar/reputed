@@ -90,7 +90,21 @@ h1 { font-size: 1.75rem; margin: 0 0 0.5rem; }
 }
 .menu button:hover, .menu a:hover { background: var(--border); }
 
-/* Wrong-network banner */
+/* Wallet picker */
+.wallet-picker { width: min(420px, calc(100vw - 32px)); }
+.wallet-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wallet-option {
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.wallet-option:hover { background: var(--border); }
+.wallet-option img, .wallet-option-icon { width: 28px; height: 28px; border-radius: 6px; flex: none; }
+.wallet-option-icon { background: var(--border); }
+.wallet-option span { display: flex; flex-direction: column; min-width: 0; }
+.wallet-option small { color: var(--muted); }
+
+/* Wrong-network and wallet-account banners */
 .banner {
   display: flex; align-items: center; justify-content: center; gap: 12px;
   padding: 10px 16px; background: var(--warn-bg); border-bottom: 1px solid var(--warn-border);

@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.4.0",
   "scripts": {
+    "dev": "pnpm --parallel --filter @reputed/server --filter @reputed/web dev",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
   }

@@ -22,7 +22,7 @@ These features make one verified human equal exactly one creator. 4 of 7 are MVP
 | CR-2 | World ID verification | Orb-level proof from a server-signed request, with the creator's wallet as the signal so the proof only works for that wallet, plus a wallet signature proving the creator controls it | MVP | 2 |
 | CR-3 | One human, one creator | A nullifier can register one creator, and a wallet can hold one nullifier | MVP | 1–2 |
 | CR-4 | On-chain creator record | `CreatorRegistered` event and an `isHumanBacked(wallet)` view | MVP | 1 |
-| CR-5 | HashPack wallet | HashPack support through WalletConnect | Later | 6 |
+| CR-5 | HashPack wallet | Wallet picker that lists every extension wallet that announces itself (EIP-6963), plus WalletConnect when `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is set. HashPack connects as an EVM wallet on chain 296, so only ECDSA accounts work; a banner flags Ed25519 accounts and long-zero addresses | Later | 6 |
 | CR-6 | Creator wallet migration | Move a creator record to a new wallet with a fresh World ID proof | Later | 8 |
 | CR-7 | Unverified creator tier | Creators without World ID, allowed at a lower trust tier | Later | 5 |
 

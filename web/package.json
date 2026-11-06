@@ -17,6 +17,7 @@
   "dependencies": {
     "@reputed/shared": "workspace:^",
     "@tanstack/react-query": "^5.106.1",
+    "@walletconnect/ethereum-provider": "^2.21.1",
     "@worldcoin/idkit": "4.6.0",
     "next": "^16.4.5",
     "react": "^19.3.1",

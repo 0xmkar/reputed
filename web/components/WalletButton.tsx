@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useAccount, useConnect, useConnectors, useDisconnect } from 'wagmi';
+import { useAccount, useConnect, useConnectors, useDisconnect, type Connector } from 'wagmi';
 import { hashscan } from '@reputed/shared';
 import { shortAddress } from '@/lib/format';
 import { useCreator } from '@/lib/useCreator';
+import { describeWalletError } from '@/lib/walletError';
 import { useToast } from './Toasts';
 import { VerifiedCreatorBadge } from './VerifiedCreatorBadge';
+import { WalletPicker, walletChoices } from './WalletPicker';
 
 export function WalletButton() {
   const { address, isConnected } = useAccount();
@@ -16,6 +18,7 @@ export function WalletButton() {
   const creator = useCreator(address);
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,25 +31,40 @@ export function WalletButton() {
   }, [open]);
 
   if (!isConnected || !address) {
+    const choices = walletChoices(connectors);
+    const connectWith = (connector: Connector) => {
+      // Closed first: the WalletConnect QR modal can't show above an open <dialog>.
+      setPicking(false);
+      connect(
+        { connector },
+        {
+          onError: (err) => {
+            const { rejected, message } = describeWalletError(err);
+            if (!rejected) toast('error', message || 'Could not connect the wallet.');
+          },
+        },
+      );
+    };
     return (
-      <button
-        type="button"
-        className="btn btn-primary"
-        disabled={isPending}
-        onClick={() => {
-          const connector = connectors[0];
-          if (!connector) {
-            toast('error', 'No browser wallet found. Install MetaMask or another EVM wallet.');
-            return;
-          }
-          connect(
-            { connector },
-            { onError: (err) => toast('error', err.message.split('\n')[0] ?? 'Could not connect the wallet.') },
-          );
-        }}
-      >
-        {isPending ? 'Connecting…' : 'Connect wallet'}
-      </button>
+      <>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={isPending}
+          onClick={() => {
+            if (choices.length === 0) {
+              toast('error', 'No wallet found. Install HashPack, MetaMask or another EVM wallet.');
+            } else if (choices.length === 1) {
+              connectWith(choices[0]!);
+            } else {
+              setPicking(true);
+            }
+          }}
+        >
+          {isPending ? 'Connecting…' : 'Connect wallet'}
+        </button>
+        <WalletPicker open={picking} connectors={choices} onPick={connectWith} onClose={() => setPicking(false)} />
+      </>
     );
   }
 

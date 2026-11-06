@@ -2,7 +2,7 @@
 
 The ordered steps from a funded operator to a live server, and which [plan](02-implementation-plan.md) tests each step unlocks.
 
-**Status:** none of this has run on testnet. No account is funded, so every step below is untested against the real network, and no T-numbered test has passed yet. The scripts have only run on a local anvil chain, and the server only with read-only Hedera calls.
+**Status:** steps 1–7 ran on testnet on 2026-11-06, and Phase 1 is proven there. Addresses and results are in [contracts/README.md](../contracts/README.md#testnet-deployment). Steps 8 onward have not run, because they need the World ID app.
 
 Needs Foundry, Node 26, pnpm 9, `jq` and `python3`. Run `pnpm install` once at the repo root.
 
@@ -14,7 +14,7 @@ Copy `.env.example` to `.env` if you have no `.env` yet. Scripts never edit `.en
 
 The operator needs an ECDSA account. `OPERATOR_KEY` must be its raw 32-byte key, and `OPERATOR_ID` its `0.0.x` ID.
 
-Send it at least 150 HBAR from the [Hedera Portal faucet](https://portal.hedera.com). Reaching a live system costs about 115 HBAR at today's rate, of which 80 is the test accounts' balances. `FUND_HBAR` in step 3 lowers that.
+Send it at least 110 HBAR from the [Hedera Portal faucet](https://portal.hedera.com). The real run cost 72 HBAR with `FUND_HBAR=5`: 20.2 for the token, 2.5 to deploy, about 46 to the test accounts, and about 3 for the rollback check and Phase 1 tests.
 
 ### 2. Set the verifier key
 
@@ -24,10 +24,10 @@ Set `VERIFIER_KEY` to the same value as `OPERATOR_KEY`. The server requires it, 
 
 ```bash
 cd contracts
-script/fund-accounts.sh
+FUND_HBAR=5 script/fund-accounts.sh
 ```
 
-Tops up every test account to 10 HBAR, and is safe to re-run. It reads the `*_ADDRESS` values in `.env`.
+Tops up every test account, 10 HBAR by default, and is safe to re-run. The relay sometimes refuses a send: just run it again. It reads the `*_ADDRESS` values in `.env`.
 
 ### 4. Deploy and create the credential token
 
@@ -50,11 +50,10 @@ This is T1.9b and costs about 5 HBAR. It must exit 0. If it fails, a failed revo
 ### 6. Verify the source
 
 ```bash
-forge verify-contract --chain 296 --verifier sourcify \
-  --verifier-url https://server-verify.hashscan.io "$CREATOR_REGISTRY" src/CreatorRegistry.sol:CreatorRegistry
+node script/verify-source.mjs "$CREATOR_REGISTRY" <deploy transaction hash>
 ```
 
-Export `CREATOR_REGISTRY` first. This command has not been run yet.
+Export `CREATOR_REGISTRY` first. This uses Sourcify's v2 API because forge 0.2.0 cannot reach the current verifier.
 
 ### 7. Create the topics
 

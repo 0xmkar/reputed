@@ -117,7 +117,7 @@ The sequence branches on `isFrozen` because neither freeze call can be made blin
 
 Revoking unfreezes, wipes and refreezes, because wiping also fails on a frozen account. The holder stays frozen even with no credentials left, and the next issue handles that.
 
-Any failed step reverts the whole call, and that revert is the only thing that stops a failed revoke or issue leaving a holder unfrozen. **This is unverified on Hedera.** It holds in `forge test`, which is standard EVM, and the node source rolls back (`savepointStack().rollback()`), but no run has shown it. `script/check-rollback.sh` is T1.9b, the check that settles it. See [Evidence](#evidence).
+Any failed step reverts the whole call, and that revert is the only thing that stops a failed revoke or issue leaving a holder unfrozen. This is confirmed on Hedera testnet: `script/check-rollback.sh` is T1.9b, and it passed both as a plain transaction and through a contract that catches the revert. See [Evidence](#evidence).
 
 The surplus from `initCredentialToken` stays in the contract, because the network only charges the fee. The contract is the token's auto-renew payer, and there is no withdraw function.
 
@@ -191,7 +191,7 @@ The contract uses custom errors, all in the ABI. A failed `0x167` call gives `Ht
 | `bash test/env-checks.sh` | Passes |
 | `node script/preflight.mjs` | Passes through Mirror Node simulation of Hedera's code on live testnet state, including the real Identity Registry. It covers T1.2, T1.5 to T1.9, T3.4, T3.8 and `syncAgentWallet`, within the limits below |
 | Script mechanics | `deploy.sh` and `check-rollback.sh` run on a local anvil chain with the double at `0x167`, and `check-rollback.sh` used a stand-in for the Mirror Node. Not run on testnet |
-| T1.9b, rollback on Hedera | **Not run.** Needs funds |
+| T1.9b, rollback on Hedera | **Passed on testnet, 2026-11-06.** Top level `0x88cba56a8ada68ee74dd6a91a5775c7ffc279352e2121dfce5629d33e5df853a`, nested `0x5529083c827902f63f1ed4fe08b752ea2639e594f5d15398008aa902752a292f`. The holder stayed FROZEN with the same balance and supply after each |
 | Any transaction on testnet | **Not done.** No account is funded |
 
 The preflight is strong evidence for HTS rules, but simulation is not consensus. A deliberately wrong struct layout fails it, so it does check the encoding. Scenario 9 prints two things it does not do:
@@ -199,9 +199,9 @@ The preflight is strong evidence for HTS rules, but simulation is not consensus.
 - **It never rolls back a nested revert.** A plain contract doing `value = 1; revert()` keeps `value = 1`, with no HTS call involved. After `revokeCredential` with a wrong serial, the holder reads as not frozen. So this is a simulator limit, and neither that result nor an earlier one, where a failed `issueCredential` left the mint in the supply, says anything about consensus.
 - **It checks no signatures or keys.** A contract without the freeze key gets a success code when it freezes a holder. In a one-off run, the same held for a stranger moving another account's NFT and for one contract associating another. Everything that depends on authority is unproven: the contract key on the collection, the treasury signing its own transfer, and `receiverSigRequired`.
 
-Atomicity is therefore unverified until T1.9b runs. The script issues a credential to a test wallet so it is frozen, then runs a failing `revokeCredential` two ways: as a plain transaction, and through `RollbackProbe`, which catches the revert so that the transaction succeeds and only the nested frame unwinds. After each, it requires the Mirror Node to show `freeze_status` FROZEN and the same balance and `total_supply`, and it confirms the call failed at the wipe and not earlier. It then revokes the test credential and removes the probe's role.
+That is why T1.9b had to run on the real network. The script issues a credential to a test wallet so it is frozen, then runs a failing `revokeCredential` two ways: as a plain transaction, and through `RollbackProbe`, which catches the revert so that the transaction succeeds and only the nested frame unwinds. After each, it requires the Mirror Node to show `freeze_status` FROZEN and the same balance and `total_supply`, and it confirms the call failed at the wipe and not earlier. It then revokes the test credential and removes the probe's role.
 
-If T1.9b fails, a failed revoke leaves a credential transferable, and that needs fixing before anything else.
+If T1.9b ever fails after a redeploy, a failed revoke leaves a credential transferable, and that needs fixing before anything else.
 
 ## Running T1.5 on testnet
 
@@ -213,3 +213,28 @@ cast send --rpc-url https://testnet.hashio.io/api --private-key "$WALLET_U_KEY" 
 ```
 
 To associate that wallet afterwards for T1.6, call `associate()` on the token's EVM address, the long-zero form of `CREDENTIAL_TOKEN_ID`, from the same wallet.
+
+### Testnet deployment
+
+Deployed 2026-11-06. Source verified on Sourcify with an exact creation and runtime match.
+
+| Item | Value |
+| --- | --- |
+| CreatorRegistry | `0x424afbefd2d91cd771785909bfc9aeb66e89a80a` (0.0.11339496) |
+| Credential token | 0.0.11339521 |
+| Reviews topic | 0.0.11339620 |
+| Scores topic | 0.0.11339621 |
+
+| Test | Result on testnet |
+| --- | --- |
+| T1.1 | Passed. `identityRegistry()` returns `0x8004A818…BD9e`, and the source is verified |
+| T1.2 | Passed. `NON_FUNGIBLE_UNIQUE`, treasury is the contract, and the supply, freeze and wipe keys all decode to contract 0.0.11339496 |
+| T1.3 | Passed. Reverted for wallet U, `0x9bc9844fb1283f1fb09efc2133ba3beb4b54b8b0fc9ccf95c23dff79e9d2422` |
+| T1.4 | Passed on a throwaway address. Same nullifier and same wallet both revert |
+| T1.5 | Not run. Needs a wallet with no free association slots; faucet wallets auto-associate |
+| T1.6 | Passed. Serial delivered, holder FROZEN |
+| T1.7 | Passed. The transfer failed with 165 (`ACCOUNT_FROZEN_FOR_TOKEN`), `0x6750ae9046d8c5dc0c7422038e7049c8255de231598aa545a4cce37e0c1326f2` |
+| T1.8 | Passed. Second credential delivered to the frozen holder, which ended FROZEN with balance 2 |
+| T1.9 | Passed. Serials removed, supply back to 0, holder still FROZEN |
+
+Real gas: deploy 1,988,234. `issueCredential` to an already associated wallet 369,368. `revokeCredential` 83,081. `registerCreator` 71,089.

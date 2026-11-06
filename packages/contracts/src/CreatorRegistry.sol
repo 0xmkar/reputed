@@ -2,6 +2,8 @@
 pragma solidity 0.8.24;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {Hts} from "./hedera/Hts.sol";
 import {IHederaTokenService} from "./hedera/IHederaTokenService.sol";
@@ -10,10 +12,24 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
 /// Ties each agent to one World ID verified human, and owns the HTS credential collection.
 /// DEFAULT_ADMIN_ROLE is the admin role. It also grants and revokes the other two roles.
-contract CreatorRegistry is ICreatorRegistry, AccessControl {
+contract CreatorRegistry is ICreatorRegistry, AccessControl, EIP712 {
+    /// A creator lets one key link agents on their behalf, without the creator's wallet or the
+    /// agent's NFT ever changing hands. The key signs per agent, the agent's owner sends the call.
+    struct Grant {
+        address creator;
+        uint64 expiresAt;
+        uint32 maxAgents;
+        uint32 used;
+        bool revoked;
+    }
+
     /// A wallet set after linking now has this contract's backing. Not in ICreatorRegistry, so the
     /// interface other tracks build against stays as agreed.
     event AgentWalletSynced(uint256 indexed agentId, address indexed creator, address indexed agentWallet, int64 serial);
+    event GrantAuthorized(address indexed creator, address indexed grantKey, uint64 expiresAt, uint32 maxAgents);
+    event GrantRevoked(address indexed creator, address indexed grantKey);
+    /// Emitted beside AgentLinked when a grant did the link, so consumers can tell who owns the NFT.
+    event AgentLinkedByGrant(uint256 indexed agentId, address indexed creator, address indexed grantKey, address owner);
 
     error ZeroAddress();
     error CredentialTokenAlreadyInitialized();
@@ -29,11 +45,21 @@ contract CreatorRegistry is ICreatorRegistry, AccessControl {
     error WalletAlreadyLinked(uint256 agentId, address wallet);
     error InvalidMetadataLength(uint256 length);
     error InvalidHolder(address holder);
+    error GrantKeyTaken(address grantKey);
+    error GrantNotFound(address grantKey);
+    error GrantExpired(address grantKey);
+    error GrantIsRevoked(address grantKey);
+    error GrantExhausted(address grantKey);
+    error GrantDeadlinePassed(uint256 deadline);
+    error BadGrantSignature();
+    error InvalidGrant();
 
     bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
     bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
 
     uint256 public constant MAX_METADATA_BYTES = 100;
+
+    bytes32 public constant LINK_GRANT_TYPEHASH = keccak256("LinkGrant(uint256 agentId,address owner,uint256 deadline)");
 
     string private constant TOKEN_NAME = "Reputed Credential";
     string private constant TOKEN_SYMBOL = "RPTD";
@@ -52,13 +78,19 @@ contract CreatorRegistry is ICreatorRegistry, AccessControl {
     mapping(bytes32 nullifierHash => address) public walletOfNullifier;
     mapping(uint256 agentId => address) public creatorOf;
     mapping(uint256 agentId => uint256) public compromisedAt;
+    /// Who held the agent NFT when it was linked. The creator for linkAgent, the agent's own account
+    /// for linkAgentWithGrant. isHumanBacked stops counting the agent when the NFT leaves this address.
+    mapping(uint256 agentId => address) public linkedOwner;
+    mapping(address grantKey => Grant) public grants;
 
     mapping(address creator => uint256[]) private _agentsOfCreator;
     /// Agents this address was linked or synced to. A hint only: isHumanBacked re-checks each one.
     mapping(address wallet => uint256[]) private _agentsLinkedToWallet;
     mapping(uint256 agentId => mapping(address wallet => bool)) private _walletLinked;
 
-    constructor(address identityRegistry_, address admin, address verifier, address issuer) {
+    constructor(address identityRegistry_, address admin, address verifier, address issuer)
+        EIP712("ReputedCreatorRegistry", "2")
+    {
         if (
             identityRegistry_ == address(0) || admin == address(0) || verifier == address(0) || issuer == address(0)
         ) revert ZeroAddress();
@@ -123,9 +155,55 @@ contract CreatorRegistry is ICreatorRegistry, AccessControl {
 
         address wallet = _currentWalletOfOwnedAgent(agentId);
         creatorOf[agentId] = msg.sender;
+        linkedOwner[agentId] = msg.sender;
         _agentsOfCreator[msg.sender].push(agentId);
 
         emit AgentLinked(agentId, msg.sender, wallet, _vouchFor(agentId, wallet));
+    }
+
+    /// Lets a creator hand a key the right to link up to maxAgents agents until expiresAt. The key
+    /// belongs to this creator for good, even after it is revoked, so nobody else can reuse it.
+    function authorizeGrant(address grantKey, uint64 expiresAt, uint32 maxAgents) external {
+        if (!isCreator[msg.sender]) revert NotCreator(msg.sender);
+        if (grantKey == address(0) || maxAgents == 0 || expiresAt <= block.timestamp) revert InvalidGrant();
+        if (grants[grantKey].creator != address(0)) revert GrantKeyTaken(grantKey);
+
+        grants[grantKey] = Grant({creator: msg.sender, expiresAt: expiresAt, maxAgents: maxAgents, used: 0, revoked: false});
+        emit GrantAuthorized(msg.sender, grantKey, expiresAt, maxAgents);
+    }
+
+    /// Stops new links. Agents the key already linked stay linked: the creator reports those one by one.
+    function revokeGrant(address grantKey) external {
+        Grant storage grant = grants[grantKey];
+        if (grant.creator != msg.sender) revert GrantNotFound(grantKey);
+        grant.revoked = true;
+        emit GrantRevoked(msg.sender, grantKey);
+    }
+
+    /// The agent's owner links the agent to the grant's creator. The grant key signs
+    /// LinkGrant(agentId, owner, deadline), so the signature works for one agent and one owner only.
+    function linkAgentWithGrant(uint256 agentId, address grantKey, uint256 deadline, bytes calldata signature) external {
+        Grant storage grant = grants[grantKey];
+        if (grant.creator == address(0)) revert GrantNotFound(grantKey);
+        if (grant.revoked) revert GrantIsRevoked(grantKey);
+        if (block.timestamp > grant.expiresAt) revert GrantExpired(grantKey);
+        if (grant.used >= grant.maxAgents) revert GrantExhausted(grantKey);
+        if (block.timestamp > deadline) revert GrantDeadlinePassed(deadline);
+        if (creatorOf[agentId] != address(0)) revert AlreadyLinked(agentId);
+
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(LINK_GRANT_TYPEHASH, agentId, msg.sender, deadline)));
+        (address signer, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, signature);
+        if (err != ECDSA.RecoverError.NoError || signer != grantKey) revert BadGrantSignature();
+
+        address wallet = _currentWalletOfOwnedAgent(agentId);
+        address creator = grant.creator;
+        grant.used += 1;
+        creatorOf[agentId] = creator;
+        linkedOwner[agentId] = msg.sender;
+        _agentsOfCreator[creator].push(agentId);
+
+        emit AgentLinked(agentId, creator, wallet, _vouchFor(agentId, wallet));
+        emit AgentLinkedByGrant(agentId, creator, grantKey, msg.sender);
     }
 
     /// Backs the wallet an agent was rotated to after linking, and issues it a credential. The wallet
@@ -201,7 +279,7 @@ contract CreatorRegistry is ICreatorRegistry, AccessControl {
             return false;
         }
         try registry.ownerOf(agentId) returns (address owner) {
-            return owner == creatorOf[agentId];
+            return owner == linkedOwner[agentId];
         } catch {
             return false;
         }

@@ -54,6 +54,19 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "LINK_GRANT_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_METADATA_BYTES",
     "inputs": [],
     "outputs": [
@@ -96,6 +109,29 @@ export const creatorRegistryAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "authorizeGrant",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxAgents",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -150,6 +186,49 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "eip712Domain",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "fields",
+        "type": "bytes1",
+        "internalType": "bytes1"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "verifyingContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "extensions",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRoleAdmin",
     "inputs": [
       {
@@ -184,6 +263,45 @@ export const creatorRegistryAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "grants",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "creator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxAgents",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "used",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "revoked",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -306,6 +424,53 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "linkAgentWithGrant",
+    "inputs": [
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "linkedOwner",
+    "inputs": [
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "registerCreator",
     "inputs": [
       {
@@ -366,6 +531,19 @@ export const creatorRegistryAbi = [
         "name": "serial",
         "type": "int64",
         "internalType": "int64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "revokeGrant",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -498,6 +676,37 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "event",
+    "name": "AgentLinkedByGrant",
+    "inputs": [
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "grantKey",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "AgentWalletSynced",
     "inputs": [
       {
@@ -580,6 +789,62 @@ export const creatorRegistryAbi = [
         "type": "int64",
         "indexed": false,
         "internalType": "int64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EIP712DomainChanged",
+    "inputs": [],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GrantAuthorized",
+    "inputs": [
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "grantKey",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "maxAgents",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GrantRevoked",
+    "inputs": [
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "grantKey",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -715,6 +980,11 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "BadGrantSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "CredentialTokenAlreadyInitialized",
     "inputs": []
   },
@@ -722,6 +992,72 @@ export const creatorRegistryAbi = [
     "type": "error",
     "name": "CredentialTokenNotInitialized",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GrantDeadlinePassed",
+    "inputs": [
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantExhausted",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantExpired",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantIsRevoked",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantKeyTaken",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "GrantNotFound",
+    "inputs": [
+      {
+        "name": "grantKey",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -757,6 +1093,11 @@ export const creatorRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidGrant",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidHolder",
     "inputs": [
       {
@@ -776,6 +1117,11 @@ export const creatorRegistryAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidShortString",
+    "inputs": []
   },
   {
     "type": "error",
@@ -828,6 +1174,17 @@ export const creatorRegistryAbi = [
         "name": "nullifierHash",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StringTooLong",
+    "inputs": [
+      {
+        "name": "str",
+        "type": "string",
+        "internalType": "string"
       }
     ]
   },

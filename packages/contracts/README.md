@@ -10,7 +10,7 @@
 | `test/` | Unit tests. The doubles in `test/doubles/` exist only here |
 | `script/` | Funding, deployment, ABI generation, the read-only preflight and the funded T1.9b check |
 | `abi/` | Pinned ERC-8004 ABIs |
-| `lib/` | Vendored forge-std v1.9.2 and five OpenZeppelin 5.1.0 files, with no submodules |
+| `lib/` | Vendored forge-std v1.9.2 and OpenZeppelin 5.1.0 (access control, plus the EIP-712 and ECDSA files and what they import), with no submodules |
 
 Needs Foundry, Node, `jq` and `python3`.
 
@@ -178,6 +178,22 @@ Clearing stale credentials takes an issuer job, which is **not built**. It belon
 For each one, call `revokeCredential(holder, serial)`. The holder and serial are in those two events, so no on-chain lookup is needed. It has to skip serials already revoked, using `CredentialRevoked`, because a repeat fails with 226. Rotating back to a wallet whose credential was revoked leaves it backed with no credential, and the issuer can reissue with `issueCredential`.
 
 Wiping inside `reportCompromise` was rejected. A wipe can fail, and a creator must always be able to report.
+
+## Grants: linking without the creator's wallet
+
+`linkAgent` needs the creator's own wallet to own the agent NFT. An agent built with the Hedera Agent Kit owns its own NFT and has no creator wallet, so v2 adds grants (EIP-712 domain `ReputedCreatorRegistry`, version `2`):
+
+| Call | Who | What it does |
+| --- | --- | --- |
+| `authorizeGrant(grantKey, expiresAt, maxAgents)` | A registered creator | Lets the address `grantKey` link up to `maxAgents` agents before `expiresAt`. A key belongs to its first creator for good |
+| `revokeGrant(grantKey)` | The grant's creator | Stops new links. Agents already linked stay linked; report them one by one with `reportCompromise` |
+| `linkAgentWithGrant(agentId, grantKey, deadline, signature)` | The agent's owner | Links the agent to the grant's creator. `grantKey` must have signed `LinkGrant(uint256 agentId,address owner,uint256 deadline)` with `owner` equal to the caller |
+
+The signature covers the agent and the caller, so it cannot be moved to another agent or sent by someone else. The link emits `AgentLinked` as before, plus `AgentLinkedByGrant` with the owner. `linkedOwner(agentId)` records who owned the NFT at link time, and `isHumanBacked` stops counting the agent when the NFT leaves that address. For `linkAgent` that is the creator, so classic behaviour is unchanged.
+
+`linkAgentWithGrant` costs the same gas as `linkAgent` (use 1,500,000) and the agent's account pays it.
+
+Not supported for grant-linked agents yet: `syncAgentWallet` (it needs the creator to own the NFT). Onboard a new agent to change wallets.
 
 ## Errors
 

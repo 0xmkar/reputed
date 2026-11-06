@@ -208,3 +208,8 @@ h2 { font-size: 1.25rem; margin: 0; }
 .skeleton-text { height: 1em; width: 100%; }
 .skeleton-ring { width: 44px; height: 44px; border-radius: 50%; }
 @keyframes pulse { 50% { opacity: 0.5; } }
+
+.review-response { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.review-response p { margin: 0; }
+
+.stale-chip { display: inline-block; margin-top: 16px; }

@@ -114,12 +114,12 @@ The log should show `scorer: published epoch N as message M`. `scorer: tick fail
 | 6 | Phase 1 exit | HashScan shows the source |
 | 7 | T4.9 | SDK from wallet U |
 | 8 | T0.5 | Developer Portal |
-| 10 | T2.1–T2.8 | Needs a real IDKit client, which is the Verify screen in `web/`. That screen is not built, so these cannot run from the server alone |
-| 10 | T3.1–T3.9 | After T2.8, which registers the creators. `cast send` with `POST /api/agent-file`, or the Onboard wizard once it exists |
+| 10 | T2.1–T2.8 | Needs a real IDKit client, which is the Verify screen in `web/`. The screen is built but unrun, and it needs the World ID app from step 8 |
+| 10 | T3.1–T3.9 | After T2.8, which registers the creators. `cast send` with `POST /api/agent-file`, or the Onboard wizard |
 | 10 | T4.1–T4.8 | After Phase 3. Each review file must be signed by its client |
 | 10 | T5.1–T5.9, T8.3 | After Phase 4. T5.8 by deleting `server/cache/scorer.sqlite*` and restarting: the log reports whether the rebuilt `inputsHash` matches the topic |
 
-**Run T1.4 on a throwaway address, not Creator A.** `registerCreator` claims a wallet permanently, and there is no way to undo it, so T1.4 as written would make T2.1 return `WALLET_TAKEN`. For the same reason, calling `registerCreator` directly to get ahead of the Verify screen leaves that wallet unable to pass Phase 2, and it is not a verified human.
+**Run T1.4 on a throwaway address, not Creator A.** `registerCreator` claims a wallet permanently, and there is no way to undo it, so T1.4 as written would make T2.1 return `WALLET_TAKEN`. For the same reason, calling `registerCreator` directly to get ahead of the Verify flow leaves that wallet unable to pass Phase 2, and it is not a verified human.
 
 Check these on the first funded run, because nothing has observed them:
 

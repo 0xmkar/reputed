@@ -1,3 +1,5 @@
+import type { ConsensusTimestamp } from './time.ts';
+
 const SDK_FORM = /^(\d+\.\d+\.\d+)@(\d{1,19})\.(\d{1,9})$/;
 const MIRROR_FORM = /^(\d+\.\d+\.\d+)-(\d{1,19})-(\d{1,9})$/;
 const ETH_HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -37,6 +39,14 @@ export function toSdkTransactionId(raw: string): string | null {
   if (!mirror) return null;
   const [account, seconds, nanos] = mirror.split('-');
   return `${account}@${seconds}.${nanos}`;
+}
+
+/**
+ * The ID web passes to hashscan.tx(). Only a 32-byte 0x hash and a consensus timestamp are known to
+ * open there, so the timestamp stands in for anything else a log carries, such as a 48-byte hash.
+ */
+export function hashscanTxId(txHash: string, timestamp: ConsensusTimestamp): string {
+  return ETH_HASH.test(txHash) ? txHash : timestamp;
 }
 
 export type PaymentProof =

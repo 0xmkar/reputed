@@ -11,6 +11,7 @@ import { DEFAULT_RATE_LIMITS, type RateLimits } from './routes/rateLimits.ts';
 import { registerReviewFileRoute } from './routes/reviewFile.ts';
 import { registerRpSignatureRoute } from './routes/rpSignature.ts';
 import { registerVerifyRoute } from './routes/verify.ts';
+import { getScorerRuntime, type ScorerRuntime } from './indexer/runtime.ts';
 import { registerReadRoutes } from './scoring/routes.ts';
 import type { VerificationStore } from './verificationStore.ts';
 import type { WorldVerifier } from './world/client.ts';
@@ -33,6 +34,8 @@ export interface AppOptions {
   rateLimits?: Partial<RateLimits>;
   /** Off in route tests, so they do not depend on the read side's environment. */
   readRoutes?: boolean;
+  /** The process-wide runtime when unset. */
+  scorer?: ScorerRuntime;
 }
 
 export async function buildApp(deps: AppDeps, options: AppOptions = {}): Promise<FastifyInstance> {
@@ -60,6 +63,8 @@ export async function buildApp(deps: AppDeps, options: AppOptions = {}): Promise
     budget: deps.reviewBudget,
   });
 
-  if (options.readRoutes !== false) registerReadRoutes(app);
+  if (options.readRoutes !== false) {
+    registerReadRoutes(app, options.scorer ?? getScorerRuntime(), rateLimits);
+  }
   return app;
 }

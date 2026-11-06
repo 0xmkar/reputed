@@ -1,0 +1,29 @@
+{
+  "name": "@reputed/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read and gate on Reputed agent reputation from code, and an MCP server for LLM agents.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "reputed-mcp": "./src/mcp.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "mcp": "node src/mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@reputed/shared": "workspace:^",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

@@ -54,6 +54,19 @@ export interface MirrorTransaction {
 
 const RETRYABLE = (status: number) => status === 429 || status >= 500;
 
+/**
+ * Mirror answers a miss with {"_status":{"messages":[...]}}. A gateway in front of it has been seen
+ * answering a plain-text 404 for a valid path, and a miss can be final, so anything else is a failure.
+ */
+async function isMirrorNotFound(response: Response): Promise<boolean> {
+  try {
+    const body = (await response.json()) as { _status?: { messages?: unknown } } | null;
+    return Array.isArray(body?._status?.messages);
+  } catch {
+    return false;
+  }
+}
+
 export class MirrorClient {
   private readonly baseUrl: string;
   private readonly doFetch: typeof fetch;
@@ -73,7 +86,10 @@ export class MirrorClient {
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
 
-  /** Null on 404. Backs off on 429, 5xx and network failures, then throws MirrorError. */
+  /**
+   * Null when Mirror itself says not found. Backs off on 429, 5xx, a 404 from anything else and
+   * network failures, then throws MirrorError.
+   */
   async getJson<T>(path: string): Promise<T | null> {
     let lastStatus: number | null = null;
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
@@ -88,10 +104,10 @@ export class MirrorClient {
         lastStatus = null;
         continue;
       }
-      if (response.status === 404) return null;
+      if (response.status === 404 && (await isMirrorNotFound(response))) return null;
       if (response.ok) return (await response.json()) as T;
       lastStatus = response.status;
-      if (!RETRYABLE(response.status)) break;
+      if (response.status !== 404 && !RETRYABLE(response.status)) break;
       const header = Number(response.headers.get('retry-after'));
       this.retryAfterMs = Number.isFinite(header) && header > 0 ? header * 1000 : null;
     }

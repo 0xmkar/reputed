@@ -410,3 +410,11 @@ details summary { cursor: pointer; }
 .tx-status { max-width: 100%; overflow-wrap: anywhere; }
 .tx-unknown { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .tx-unknown > span { min-width: 0; }
+
+/* Dashboard */
+.code-block { margin: 0; padding: 10px 12px; background: var(--bg, #0b0b0c); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; font-size: 0.85rem; }
+.code-block code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.grant-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.grant-agents { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.grant-agents li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }

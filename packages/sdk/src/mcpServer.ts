@@ -3,28 +3,7 @@ import { z } from 'zod';
 import type { AgentDetail } from '@reputed/shared';
 import type { ReputedClient } from './client.ts';
 import { ReputedError } from './errors.ts';
-
-/** A short, model-friendly view of an agent. Reviews are left out; they can be long. */
-function summarise(agent: AgentDetail) {
-  return {
-    agentId: agent.agentId,
-    name: agent.name,
-    description: agent.description,
-    score: agent.score.value,
-    tier: agent.score.tier,
-    scoreInheritedFromCreator: agent.score.isNew,
-    humanBacked: agent.humanBacked,
-    status: agent.status,
-    creator: agent.creator,
-    creatorScore: agent.creatorScore,
-    reviewsCounted: agent.reviewsCounted,
-    reviewsExcluded: agent.reviewsExcluded,
-    penaltiesConfirmed: agent.penaltiesConfirmed,
-    scoresStale: agent.scoresStale,
-    acceptsX402: agent.acceptsX402,
-    credentials: agent.credentials.map((c) => ({ kind: c.kind, title: c.title, revoked: c.revoked })),
-  };
-}
+import { summarise } from './summary.ts';
 
 function asText(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };

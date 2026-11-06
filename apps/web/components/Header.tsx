@@ -16,6 +16,7 @@ export function Header() {
         <nav className="nav" aria-label="Main">
           <Link href="/explore">Explore</Link>
           {isConnected && address && <Link href={`/creator/${address}`}>My agents</Link>}
+          {isConnected && <Link href="/dashboard">Dashboard</Link>}
         </nav>
         <div className="header-right">
           <Link href="/onboard" className="btn btn-primary">

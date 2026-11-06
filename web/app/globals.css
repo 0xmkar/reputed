@@ -228,3 +228,11 @@ h2 { font-size: 1.25rem; margin: 0; }
 .banner-inline { padding: 10px 14px; border-radius: var(--radius); background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); }
 .banner-danger { background: var(--error-bg); border-color: var(--error); color: var(--error); }
 details summary { cursor: pointer; }
+
+/* ---- Creator profile ---- */
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.table th, .table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
+.table th { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.table tbody tr:last-child td { border-bottom: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

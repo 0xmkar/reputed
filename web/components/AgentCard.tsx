@@ -15,7 +15,7 @@ export function AgentCard({ agent }: { agent: AgentSummary }) {
       <div className="agent-card-head">
         {isHttpsUrl(agent.image) ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img className="agent-image" src={agent.image} alt="" width={48} height={48} loading="lazy" />
+          <img className="agent-image" src={agent.image} alt="" width={48} height={48} loading="lazy" referrerPolicy="no-referrer" />
         ) : (
           <span className="agent-image agent-image-fallback" aria-hidden="true">
             {agent.name.slice(0, 1).toUpperCase()}

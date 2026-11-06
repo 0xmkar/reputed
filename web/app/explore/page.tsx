@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentSummary, Tier } from '@reputed/shared';
 import { useAgents } from '@/lib/useAgents';
+import { useDebounced } from '@/lib/useDebounced';
 import { AgentGrid } from '@/components/AgentGrid';
 import { EmptyState } from '@/components/EmptyState';
 import { StaleScoresChip } from '@/components/StaleScoresChip';
@@ -20,20 +21,17 @@ const TIERS: Tier[] = ['Tier 1', 'Tier 2', 'Tier 3'];
 
 export default function ExplorePage() {
   const [search, setSearch] = useState('');
-  const [q, setQ] = useState('');
   const [humanBacked, setHumanBacked] = useState(true);
   const [minScore, setMinScore] = useState(0);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [x402Only, setX402Only] = useState(false);
   const [sort, setSort] = useState<Sort>('score');
 
-  // Wait for a pause in typing before asking the server.
-  useEffect(() => {
-    const t = setTimeout(() => setQ(search.trim()), 300);
-    return () => clearTimeout(t);
-  }, [search]);
+  // Wait for a pause in typing or dragging before asking the server.
+  const q = useDebounced(search.trim());
+  const debouncedMinScore = useDebounced(minScore);
 
-  const { data, isLoading, error, refetch } = useAgents({ q: q || undefined, humanBacked, minScore });
+  const { data, isLoading, error, refetch } = useAgents({ q: q || undefined, humanBacked, minScore: debouncedMinScore });
 
   const agents = useMemo(() => {
     if (!data) return undefined;
@@ -45,7 +43,6 @@ export default function ExplorePage() {
 
   function reset() {
     setSearch('');
-    setQ('');
     setHumanBacked(true);
     setMinScore(0);
     setTiers([]);

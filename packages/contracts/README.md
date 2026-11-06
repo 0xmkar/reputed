@@ -271,6 +271,8 @@ Deployed 2026-11-07 as a new contract, because grants add functions and a new cr
 | Credential token | 0.0.11344804 |
 | CreatorRegistry v1 | `0x424afbefd2d91cd771785909bfc9aeb66e89a80a`, no longer used |
 
+The source is verified on Sourcify (chain 296, exact runtime match). HashScan's own Sourcify endpoint answered 404 for this, so it was submitted to the main server: add `--constructor-args` and leave out `--verifier-url`.
+
 Creating the collection takes **17.5 HBAR** as the value of `initCredentialToken`: a `cast call` simulation accepted 17.5 and refused 17.4, so the fee is about 17.45 HBAR. `deploy.sh` defaults to 20; use `INIT_HBAR=17.5`. Deploying the contract used 3.45 HBAR.
 
 `script/migrate-creators.sh` replayed the 5 creators of v1 into v2 with the verifier role, so nobody redoes World ID. Agents linked on v1 are not carried over: link them again.

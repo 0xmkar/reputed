@@ -5,6 +5,14 @@ import type { AgentEndpoints } from '@reputed/shared';
 const MAX_AGENT_FILE_BYTES = 256 * 1024;
 const FETCH_TIMEOUT_MS = 8_000;
 
+// A file can be 256 KB, and every list response carries these fields. All sit above what a file
+// from POST /api/agent-file can hold, so only an oversized file written elsewhere loses anything.
+const MAX_NAME_CHARS = 256;
+const MAX_DESCRIPTION_CHARS = 4_000;
+const MAX_TAGS = 32;
+const MAX_TAG_CHARS = 64;
+const MAX_URL_CHARS = 2_048;
+
 const PRIVATE_RANGES = new BlockList();
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
@@ -27,6 +35,7 @@ export interface AgentProfile {
   image?: string;
   tags: string[];
   endpoints: AgentEndpoints;
+  acceptsX402: boolean;
 }
 
 /** A browser resolves these the same way, so a leading space cannot smuggle a javascript: URL. */
@@ -35,15 +44,44 @@ function hasScheme(value: string, schemes: readonly string[]): boolean {
 }
 
 const LINK_SCHEMES = ['http:', 'https:'];
-// ipfs: cannot run anything in a browser, and agent files are hosted there.
-const IMAGE_SCHEMES = [...LINK_SCHEMES, 'ipfs:'];
+
+// Browsers load this, so it is not IPFS_GATEWAY, which only has to work from the server.
+const IMAGE_GATEWAY = 'https://ipfs.io/ipfs/';
+const IPFS_CID = /^[a-zA-Z0-9]+$/;
+
+/** ipfs://<cid>[/path] on the gateway. The result is re-read so a path cannot climb out of the CID. */
+function ipfsImageUrl(url: URL): string | undefined {
+  if (!url.host) return undefined;
+  // ipfs://ipfs/<cid> is a common spelling of the same thing.
+  const path = `${url.host}${url.pathname}${url.search}${url.hash}`.replace(/^ipfs\//, '');
+  const cid = path.split(/[/?#]/, 1)[0]!;
+  if (!IPFS_CID.test(cid)) return undefined;
+  const gateway = new URL(`${IMAGE_GATEWAY}${path}`);
+  const root = `/ipfs/${cid}`;
+  return gateway.pathname === root || gateway.pathname.startsWith(`${root}/`)
+    ? gateway.href
+    : undefined;
+}
+
+/** The image is creator-supplied and web renders https only, so nothing else leaves the server. */
+export function safeImageUrl(raw: string): string | undefined {
+  if (!URL.canParse(raw)) return undefined;
+  const url = new URL(raw);
+  if (url.protocol === 'ipfs:') return ipfsImageUrl(url);
+  return url.protocol === 'https:' && !url.username && !url.password ? url.href : undefined;
+}
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
 }
 
+/** Cuts at a character, not through one: half an emoji would serialise as a broken escape. */
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(0, max).replace(/[\uD800-\uDBFF]$/, '');
+}
+
 export function parseAgentProfile(body: string | null): AgentProfile {
-  const empty: AgentProfile = { tags: [], endpoints: {} };
+  const empty: AgentProfile = { tags: [], endpoints: {}, acceptsX402: false };
   if (body === null) return empty;
   let file: Record<string, unknown>;
   try {
@@ -58,6 +96,7 @@ export function parseAgentProfile(body: string | null): AgentProfile {
   const services = Array.isArray(file['services']) ? file['services'] : [];
   for (const service of services as { name?: unknown; endpoint?: unknown }[]) {
     if (typeof service?.endpoint !== 'string' || typeof service?.name !== 'string') continue;
+    if (service.endpoint.length > MAX_URL_CHARS) continue;
     if (!hasScheme(service.endpoint, LINK_SCHEMES)) continue;
     const name = service.name.toLowerCase();
     if (name === 'a2a') endpoints.a2a = service.endpoint;
@@ -70,13 +109,19 @@ export function parseAgentProfile(body: string | null): AgentProfile {
   const name = text('name');
   const description = text('description');
   const rawImage = text('image');
-  const image = rawImage && hasScheme(rawImage, IMAGE_SCHEMES) ? rawImage : undefined;
+  // A cut URL points somewhere else, so one that is too long goes, unlike a name or description.
+  const image = rawImage && rawImage.length <= MAX_URL_CHARS ? safeImageUrl(rawImage) : undefined;
   return {
-    ...(name !== undefined ? { name } : {}),
-    ...(description !== undefined ? { description } : {}),
+    ...(name !== undefined ? { name: clip(name, MAX_NAME_CHARS) } : {}),
+    ...(description !== undefined
+      ? { description: clip(description, MAX_DESCRIPTION_CHARS) }
+      : {}),
     ...(image ? { image } : {}),
-    tags: stringList(file['tags']),
+    tags: stringList(file['tags'])
+      .filter((tag) => tag.length <= MAX_TAG_CHARS)
+      .slice(0, MAX_TAGS),
     endpoints,
+    acceptsX402: file['x402Support'] === true,
   };
 }
 

@@ -2,15 +2,18 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import rateLimit from '@fastify/rate-limit';
 import { creatorRegistryAbi, identityRegistryAbi, reputationRegistryAbi, type Address } from '@reputed/shared';
 import Fastify from 'fastify';
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, toEventSelector, toHex, type Abi, type AbiEvent, type Hex } from 'viem';
 import { describe, expect, it, vi } from 'vitest';
 import { registerErrorHandling } from '../errors.ts';
+import { DEFAULT_RATE_LIMITS, type RateLimits } from '../routes/rateLimits.ts';
 import { SCORING_CONFIG } from '../scoring/config.ts';
 import { registerReadRoutes } from '../scoring/routes.ts';
 import { createEpochLoop } from '../scoring/scheduler.ts';
 import { canonicalJson } from '../scoring/snapshot.ts';
+import { toIso } from '../scoring/time.ts';
 import { assembleChunks, readLatestSnapshot, type SnapshotPublisher } from '../scoring/topic.ts';
 import { parseAgentProfile, loadAgentFile } from './agentFile.ts';
 import { decodeLog, type MirrorLog } from './decode.ts';
@@ -18,7 +21,7 @@ import { foldEvents } from './fold.ts';
 import { ingestSource } from './ingest.ts';
 import { parseHcsUri } from './inputs.ts';
 import { MirrorClient, MirrorError, toPaymentFact, type TopicMessage } from './mirror.ts';
-import { ScorerRuntime } from './runtime.ts';
+import { ScorerRuntime, type RuntimeDeps } from './runtime.ts';
 import type { ScorerSettings } from './settings.ts';
 import { Store } from './store.ts';
 
@@ -40,6 +43,11 @@ const account = (wallet: Address) => `0.0.${BigInt(wallet)}`;
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status, headers });
 }
+
+/** The body testnet Mirror answers a miss with, measured on 2026-11-06. */
+const notFound = () => json({ _status: { messages: [{ message: 'Not found' }] } }, 404);
+/** What a gateway in front of Mirror answered for a valid path, then 200 on the next try. */
+const gatewayNotFound = () => new Response('404 page not found', { status: 404, headers: { 'content-type': 'text/plain' } });
 
 let logIndex = 0;
 function log(abi: Abi, eventName: string, args: Record<string, unknown>, timestamp: string, address: string): MirrorLog {
@@ -99,6 +107,18 @@ class FakeMirror {
   forced = new Map<string, number>();
   /** The first call matching this takes the whole mirror down. */
   outageOn: RegExp | null = null;
+  /** How many more times each path answers with a gateway's 404 instead of Mirror's. */
+  gatewayMisses = new Map<string, number>();
+  private held: { path: RegExp; reached: () => void; release: Promise<void> } | null = null;
+
+  /** Parks the next call matching path. Resolves once it arrives, with the function that frees it. */
+  hold(path: RegExp): Promise<() => void> {
+    let free = () => {};
+    const release = new Promise<void>((resolve) => { free = resolve; });
+    return new Promise((resolve) => {
+      this.held = { path, release, reached: () => resolve(free) };
+    });
+  }
 
   fetch: typeof fetch = async (input) => {
     const url = new URL(String(input));
@@ -106,6 +126,17 @@ class FakeMirror {
     this.calls.push(path + url.search);
     if (this.outageOn?.test(path)) this.failing = true;
     if (this.failing) return json({}, 503);
+    if (this.held?.path.test(path)) {
+      const { reached, release } = this.held;
+      this.held = null;
+      reached();
+      await release;
+    }
+    const misses = this.gatewayMisses.get(path) ?? 0;
+    if (misses > 0) {
+      this.gatewayMisses.set(path, misses - 1);
+      return gatewayNotFound();
+    }
     const status = this.forced.get(path);
     if (status !== undefined) return json({}, status);
 
@@ -119,7 +150,7 @@ class FakeMirror {
       const sequence = BigInt(single[2]!);
       if (sequence === 0n || sequence >= 2n ** 63n) return json({}, 400);
       const found = this.messages.get(single[1]!)?.find((item) => item.sequence_number === Number(single[2]));
-      return found ? json(found) : json({}, 404);
+      return found ? json(found) : notFound();
     }
     const list = /^\/api\/v1\/topics\/([^/]+)\/messages$/.exec(path);
     if (list) return json({ messages: [...(this.messages.get(list[1]!) ?? [])].reverse(), links: { next: null } });
@@ -131,14 +162,14 @@ class FakeMirror {
       if (seconds >= 9223372037n) return json({}, 400);
       if (seconds >= 9223369937n) return json({}, 503);
       const found = this.transactions.get(tx[1]!);
-      return found ? json({ transactions: found }) : json({}, 404);
+      return found ? json({ transactions: found }) : notFound();
     }
     const acct = /^\/api\/v1\/accounts\/([^/]+)$/.exec(path);
     if (acct) {
       const found = this.accounts.get(acct[1]!);
-      return found ? json(found) : json({}, 404);
+      return found ? json(found) : notFound();
     }
-    return json({}, 404);
+    return notFound();
   };
 
   private logsPage(address: string, url: URL): Response {
@@ -247,13 +278,36 @@ const settings = (overrides: Partial<ScorerSettings> = {}): ScorerSettings => ({
   ...overrides,
 });
 
-function runtimeFor(fake: FakeMirror, store = new Store(':memory:'), overrides: Partial<ScorerSettings> = {}, epochSeconds = EPOCH): ScorerRuntime {
+function runtimeFor(fake: FakeMirror, store = new Store(':memory:'), overrides: Partial<ScorerSettings> = {}, epochSeconds = EPOCH, deps: Partial<RuntimeDeps> = {}): ScorerRuntime {
   return new ScorerRuntime({
     store,
     settings: settings(overrides),
     mirror: new MirrorClient({ baseUrl: 'https://mirror.test', fetch: fake.fetch, sleep: async () => {} }),
     config: { ...SCORING_CONFIG, epochSeconds },
+    ...deps,
   });
+}
+
+interface ApiOptions {
+  deps?: Partial<RuntimeDeps>;
+  rateLimits?: Partial<RateLimits>;
+  sync?: boolean;
+  store?: Store;
+}
+
+async function api(fake = seeded(), options: ApiOptions = {}) {
+  const runtime = runtimeFor(fake, options.store, {}, EPOCH, options.deps);
+  if (options.sync !== false) await runtime.sync();
+  const app = Fastify();
+  registerErrorHandling(app);
+  await app.register(rateLimit, { global: false });
+  registerReadRoutes(app, runtime, { ...DEFAULT_RATE_LIMITS, ...options.rateLimits });
+  await app.ready();
+  const get = async (url: string, remoteAddress?: string) => {
+    const response = await app.inject({ method: 'GET', url, ...(remoteAddress ? { remoteAddress } : {}) });
+    return { status: response.statusCode, body: response.json(), headers: response.headers };
+  };
+  return { app, get, runtime };
 }
 
 function feedbackAt(uri: string, index: bigint, at: number, hash: Hex = toHex(0, { size: 32 })): MirrorLog {
@@ -331,7 +385,7 @@ describe('MirrorClient', () => {
     const flaky = new MirrorClient({
       baseUrl: 'https://mirror.test',
       sleep: async () => {},
-      fetch: (async () => { if (++calls === 1) throw new TypeError('socket'); return json({}, 404); }) as typeof fetch,
+      fetch: (async () => { if (++calls === 1) throw new TypeError('socket'); return notFound(); }) as typeof fetch,
     });
     await expect(flaky.getJson('/x')).resolves.toBeNull();
     expect(calls).toBe(2);
@@ -344,6 +398,26 @@ describe('MirrorClient', () => {
     });
     await expect(bad.getJson('/x')).rejects.toBeInstanceOf(MirrorError);
     expect(calls).toBe(1);
+  });
+  it('retries a 404 that did not come from Mirror, as it would a 5xx', async () => {
+    let calls = 0;
+    const client = new MirrorClient({
+      baseUrl: 'https://mirror.test',
+      sleep: async () => {},
+      fetch: (async () => (++calls === 1 ? gatewayNotFound() : json({ ok: true }))) as typeof fetch,
+    });
+    await expect(client.getJson('/x')).resolves.toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+  it('gives up on a 404 that never comes from Mirror with a MirrorError, not a miss', async () => {
+    for (const answer of [gatewayNotFound, () => json({}, 404), () => json({ _status: 'gone' }, 404), () => new Response('null', { status: 404 })]) {
+      const client = new MirrorClient({ baseUrl: 'https://mirror.test', sleep: async () => {}, maxRetries: 2, fetch: (async () => answer()) as typeof fetch });
+      await expect(client.getJson('/x')).rejects.toMatchObject({ name: 'MirrorError', status: 404 });
+      await expect(client.topicMessage('0.0.500', 1)).rejects.toBeInstanceOf(MirrorError);
+      await expect(client.account(WALLET_B1)).rejects.toBeInstanceOf(MirrorError);
+      await expect(client.payment({ kind: 'transaction-id', key: '0.0.1-1-000000001' })).rejects.toBeInstanceOf(MirrorError);
+      await expect(client.logsPage('/logs')).rejects.toBeInstanceOf(MirrorError);
+    }
   });
   it('reads an EVM hash proof through contract results', async () => {
     const fake = new FakeMirror();
@@ -595,6 +669,46 @@ describe('sync and scoring from logs', () => {
     await runtime.sync();
     expect(fake.calls.filter((call) => /\/(topics|transactions)\//.test(call))).toEqual([]);
   });
+  it('T5.8: one gateway 404 on a review file changes nothing', async () => {
+    const epoch = BASE / EPOCH;
+    const fake = seeded();
+    const clean = runtimeFor(fake);
+    await clean.sync();
+
+    fake.gatewayMisses.set(`/api/v1/topics/${REVIEWS_TOPIC}/messages/1`, 1);
+    const runtime = runtimeFor(fake);
+    await runtime.sync();
+    expect(runtime.view()!.result.reviews.map((item) => item.exclusionReason)).toEqual(clean.view()!.result.reviews.map((item) => item.exclusionReason));
+    expect(runtime.buildEpoch(epoch).snapshot.inputsHash).toBe(clean.buildEpoch(epoch).snapshot.inputsHash);
+  });
+  it('T5.8: one gateway 404 on a payment does not cache it as empty', async () => {
+    const epoch = BASE / EPOCH;
+    const fake = seeded();
+    const clean = runtimeFor(fake);
+    await clean.sync();
+
+    fake.gatewayMisses.set(`/api/v1/transactions/${account(WALLET_B1)}-${BASE - 510}-000000001`, 1);
+    const runtime = runtimeFor(fake);
+    await runtime.sync();
+    expect(runtime.view()!.result.agents.find((item) => item.agentId === '1')).toMatchObject({ score: 90, counted: 1 });
+    expect(runtime.buildEpoch(epoch).snapshot.inputsHash).toBe(clean.buildEpoch(epoch).snapshot.inputsHash);
+  });
+  it('holds an epoch back while a gateway keeps answering 404 for a review file, then recovers', async () => {
+    const epoch = BASE / EPOCH;
+    const fake = seeded();
+    const clean = runtimeFor(fake);
+    await clean.sync();
+
+    fake.gatewayMisses.set(`/api/v1/topics/${REVIEWS_TOPIC}/messages/1`, 1_000);
+    const runtime = runtimeFor(fake);
+    await runtime.sync();
+    expect(runtime.store.reviewFile(`hcs://${REVIEWS_TOPIC}/1`)).toBeUndefined();
+    expect(runtime.buildEpoch(epoch).pending).toBe(1);
+
+    fake.gatewayMisses.clear();
+    await runtime.sync();
+    expect(runtime.buildEpoch(epoch)).toMatchObject({ pending: 0, snapshot: { inputsHash: clean.buildEpoch(epoch).snapshot.inputsHash } });
+  });
   it('isolates a lookup that keeps failing: other reviews score, the epoch waits, and it recovers', async () => {
     const fake = seeded();
     const proof = '0.0.77-1700000000-000000009';
@@ -763,6 +877,71 @@ describe('epoch loop', () => {
     const rebuilt = runtimeFor(fake, new Store(':memory:'));
     await rebuilt.sync();
     expect(rebuilt.buildEpoch(epoch).snapshot).toEqual(cached.buildEpoch(epoch).snapshot);
+  });
+  describe('wallets with no Hedera account', () => {
+    const NEWCOMER = addr(0xfeed);
+    const proof = `${account(WALLET_B1)}-${BASE - 60}-000000009`;
+    const accountReads = (fake: FakeMirror) => fake.calls.filter((call) => call.startsWith(`/api/v1/accounts/${NEWCOMER}`)).length;
+    function cited() {
+      const fake = seeded();
+      fake.payment(WALLET_B1, WALLET_A1, BASE - 60, proof);
+      fake.review({ agentId: 1n, client: NEWCOMER, index: 1n, value: 10n, at: BASE - 50, proof });
+      return fake;
+    }
+
+    it('reads a missing account once per epoch, even for a linked agent and across a restart', async () => {
+      const fake = cited();
+      const store = new Store(':memory:');
+      const runtime = runtimeFor(fake, store);
+      await runtime.sync();
+      expect(accountReads(fake)).toBe(1);
+      for (let tick = 1; tick <= 5; tick += 1) {
+        fake.consensus = ts(BASE + 10 + tick);
+        await runtime.sync();
+      }
+      await runtimeFor(fake, store).sync();
+      expect(accountReads(fake)).toBe(1);
+
+      fake.consensus = ts(BASE + EPOCH + 1);
+      await runtime.sync();
+      await runtime.sync();
+      expect(accountReads(fake)).toBe(2);
+    });
+    it('T5.8: an account created after the miss but before the epoch ended reaches the hash', async () => {
+      const fake = cited();
+      const runtime = runtimeFor(fake);
+      await runtime.sync();
+
+      fake.addAccount(NEWCOMER, ts(BASE + 30));
+      fake.consensus = ts(BASE + EPOCH + 5);
+      await runtime.sync();
+
+      const epoch = BASE / EPOCH + 1;
+      const rebuilt = runtimeFor(fake);
+      await rebuilt.sync();
+      expect(runtime.buildEpoch(epoch)).toMatchObject({ pending: 0, snapshot: { inputsHash: rebuilt.buildEpoch(epoch).snapshot.inputsHash } });
+    });
+    it('T5.8: an account created after the epoch stays out of it, whatever the cache knew', async () => {
+      const fake = cited();
+      const runtime = runtimeFor(fake);
+      await runtime.sync();
+      const before = runtime.buildEpoch(BASE / EPOCH).snapshot.inputsHash;
+
+      fake.addAccount(NEWCOMER, ts(BASE + 30));
+      fake.consensus = ts(BASE + EPOCH + 5);
+      await runtime.sync();
+      expect(runtime.buildEpoch(BASE / EPOCH).snapshot.inputsHash).toBe(before);
+    });
+    it('uses a found account at once, once the miss has expired', async () => {
+      const fake = cited();
+      const runtime = runtimeFor(fake);
+      await runtime.sync();
+      expect(runtime.store.account(NEWCOMER)).toBeUndefined();
+      fake.addAccount(NEWCOMER, ts(BASE + 30));
+      fake.consensus = ts(BASE + EPOCH + 5);
+      await runtime.sync();
+      expect(runtime.store.account(NEWCOMER)).toEqual({ accountId: account(NEWCOMER), createdAt: ts(BASE + 30) });
+    });
   });
   it('keeps publishing after the epoch length is lengthened, with the cache intact or wiped', async () => {
     for (const wipe of [false, true]) {
@@ -1019,15 +1198,37 @@ describe('agent files', () => {
     expect(good.endpoints).toEqual({ web: 'http://agent.example/a', mcp: 'https://agent.example' });
   });
   it('keeps only image URLs that cannot run anything', () => {
-    for (const image of ['javascript:alert(1)', 'data:text/html,x', 'data:image/svg+xml,<svg onload=alert(1)>', 'not a url']) {
+    for (const image of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,x', 'data:image/svg+xml,<svg onload=alert(1)>', 'data:image/png;base64,AAAA', 'http://example.com/a.png', 'ftp://example.com/a.png', 'https://user:pw@example.com/a.png', 'not a url', '']) {
       expect(parseAgentProfile(JSON.stringify({ image })).image).toBeUndefined();
     }
-    for (const image of ['https://example.com/a.png', 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi']) {
-      expect(parseAgentProfile(JSON.stringify({ image })).image).toBe(image);
+    expect(parseAgentProfile(JSON.stringify({ image: 'https://example.com/a.png?size=2' })).image).toBe('https://example.com/a.png?size=2');
+    expect(parseAgentProfile(JSON.stringify({ image: 7 })).image).toBeUndefined();
+  });
+  it('turns an ipfs image into an https gateway URL, keeping the case of the CID', () => {
+    const cid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+    const image = (raw: string) => parseAgentProfile(JSON.stringify({ image: raw })).image;
+    expect(image(`ipfs://${cid}`)).toBe(`https://ipfs.io/ipfs/${cid}`);
+    expect(image(`ipfs://${cid}/images/a.png`)).toBe(`https://ipfs.io/ipfs/${cid}/images/a.png`);
+    expect(image(`ipfs://ipfs/${cid}/a.png`)).toBe(`https://ipfs.io/ipfs/${cid}/a.png`);
+    expect(image(` IPFS://${cid}/a.png`)).toBe(`https://ipfs.io/ipfs/${cid}/a.png`);
+  });
+  it('drops an ipfs image that does not stay inside its CID on the gateway', () => {
+    for (const raw of ['ipfs://', 'ipfs:///a.png', 'ipfs:Qm', 'ipfs://../../evil', 'ipfs://cid:80/a.png', 'ipfs://a.b/c', 'ipfs://ipfs/', 'ipfs://cid\\..\\..\\evil', 'ipfs://cid/a\\..\\..\\..\\evil', 'ipfs://cid/a\\..\\..\\..\\..\\elsewhere/x.png']) {
+      expect(parseAgentProfile(JSON.stringify({ image: raw })).image, raw).toBeUndefined();
+    }
+    // Dot segments that URL parsing clamps at the root end up inside the CID, which is harmless.
+    for (const raw of ['ipfs://cid/../../evil', 'ipfs://cid/%2e%2e/%2e%2e/evil']) {
+      expect(parseAgentProfile(JSON.stringify({ image: raw })).image, raw).toBe('https://ipfs.io/ipfs/cid/evil');
+    }
+  });
+  it('reads x402Support as a real boolean, and false for an unreadable file', () => {
+    expect(parseAgentProfile(JSON.stringify({ x402Support: true })).acceptsX402).toBe(true);
+    for (const body of [JSON.stringify({ x402Support: false }), JSON.stringify({ x402Support: 'true' }), JSON.stringify({ x402Support: 1 }), '{}', 'not json', '[1]', null]) {
+      expect(parseAgentProfile(body).acceptsX402, String(body)).toBe(false);
     }
   });
   it('survives junk', () => {
-    expect(parseAgentProfile('not json')).toEqual({ tags: [], endpoints: {} });
+    expect(parseAgentProfile('not json')).toEqual({ tags: [], endpoints: {}, acceptsX402: false });
     expect(parseAgentProfile('[1]').tags).toEqual([]);
     expect(parseAgentProfile(null).endpoints).toEqual({});
   });
@@ -1046,20 +1247,6 @@ describe('agent files', () => {
 });
 
 describe('read API', () => {
-  async function api(fake = seeded()) {
-    const runtime = runtimeFor(fake);
-    await runtime.sync();
-    const app = Fastify();
-    registerErrorHandling(app);
-    registerReadRoutes(app, runtime);
-    await app.ready();
-    const get = async (url: string) => {
-      const response = await app.inject({ method: 'GET', url });
-      return { status: response.statusCode, body: response.json() };
-    };
-    return { app, get, runtime };
-  }
-
   it('lists linked agents with stats', async () => {
     const { get } = await api();
     const { status, body } = await get('/api/agents');
@@ -1085,7 +1272,7 @@ describe('read API', () => {
     const ids = async (url: string) => (await get(url)).body.agents.map((agent: { agentId: string }) => agent.agentId);
     expect(await ids('/api/agents?q=reviewer')).toEqual(['2']);
     expect(await ids('/api/agents?q=defi')).toHaveLength(3);
-    expect(await ids('/api/agents?humanBacked=false')).toEqual([]);
+    expect(await ids('/api/agents?humanBacked=true')).toHaveLength(3);
     expect((await ids('/api/agents?minScore=95'))).toEqual(['2']);
   });
   it('rejects a bad query with BAD_REQUEST', async () => {
@@ -1120,7 +1307,7 @@ describe('read API', () => {
     const { body } = await get('/api/agents/3');
     expect(body).toMatchObject({ agentId: '3', creator: null, humanBacked: false, creatorScore: null, score: { value: 0, isNew: false } });
     expect((await get('/api/agents')).body).toEqual(before);
-    expect((await get('/api/agents?humanBacked=false')).body.agents).toEqual([]);
+    expect((await get('/api/agents?humanBacked=false')).body).toEqual(before);
     expect(runtime.buildEpoch(BASE / EPOCH).snapshot.agents.map((agent) => agent.agentId)).toEqual(['1', '2', '4']);
   });
   it('does not let a visit to an unlinked agent move a linked agent\'s live score', async () => {
@@ -1242,11 +1429,845 @@ describe('read API', () => {
     }
   });
   it('answers with an empty list before the first sync', async () => {
-    const runtime = runtimeFor(new FakeMirror());
-    const app = Fastify();
-    registerErrorHandling(app);
-    registerReadRoutes(app, runtime);
+    const { get } = await api(new FakeMirror(), { sync: false });
+    expect((await get('/api/agents')).body).toEqual({ agents: [], stats: { agents: 0, humanBacked: 0, creators: 0, reviewsCounted: 0 }, scoresStale: false });
+  });
+});
+
+const CREATOR_C = addr(0xc);
+const WALLET_C1 = addr(0xc1);
+const STRANGER = addr(0xdd);
+const IDS = (body: { agents: { agentId: string }[] }) => body.agents.map((agent) => agent.agentId).sort();
+
+function fileUri(file: object): string {
+  return `data:application/json;base64,${Buffer.from(JSON.stringify(file)).toString('base64')}`;
+}
+
+function setUri(agentId: bigint, newURI: string, at: number): MirrorLog {
+  return identityLog('URIUpdated', { agentId, newURI, updatedBy: CREATOR_A }, ts(at));
+}
+
+/** Creator C with a linked agent, so B and C can both report on agent 1. */
+function withThirdCreator(fake: FakeMirror): void {
+  fake.addAccount(CREATOR_C);
+  fake.addAccount(WALLET_C1);
+  fake.logs.get(IDENTITY)!.push(...mint(8n, CREATOR_C, BASE - 780, 'Reviewer C1'), setWallet(8n, WALLET_C1, BASE - 779));
+  fake.logs.get(REGISTRY)!.push(
+    registryLog('CreatorRegistered', { nullifierHash: toHex(3, { size: 32 }), wallet: CREATOR_C }, ts(BASE - 775)),
+    registryLog('AgentLinked', { agentId: 8n, creator: CREATOR_C, agentWallet: WALLET_C1, serial: 9n }, ts(BASE - 770)),
+  );
+}
+
+function report(fake: FakeMirror, client: Address, index: bigint, at: number): void {
+  const proof = `${account(client)}-${at - 20}-000000001`;
+  fake.payment(client, WALLET_A1, at - 10, proof);
+  fake.review({ agentId: 1n, client, index, value: 0n, tag1: 'misconduct', tag2: 'fraud', at, proof });
+}
+
+describe('agent status', () => {
+  const compromise = registryLog('AgentCompromised', { agentId: 1n, creator: CREATOR_A, timestamp: BigInt(BASE + 2) }, ts(BASE + 2));
+  const sell = () => identityLog('Transfer', { from: CREATOR_A, to: STRANGER, tokenId: 1n }, ts(BASE + 1));
+
+  it('is active on a healthy agent, in the list and on the agent', async () => {
+    const { get } = await api();
+    expect((await get('/api/agents')).body.agents.map((agent: { status: string }) => agent.status)).toEqual(['active', 'active', 'active']);
+    expect((await get('/api/agents/1')).body.status).toBe('active');
+  });
+  it('stays active when the wallet is unset but the creator still owns the NFT', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(setWallet(1n, '0x', BASE + 1));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body).toMatchObject({ wallet: null, status: 'active', operatorChanged: false });
+  });
+  it('is operator-changed once the NFT leaves the creator', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(sell());
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.status).toBe('operator-changed');
+  });
+  it('is active again if the NFT returns to the creator', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(sell(), identityLog('Transfer', { from: STRANGER, to: CREATOR_A, tokenId: 1n }, ts(BASE + 3)));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.status).toBe('active');
+  });
+  it('is compromised on a report', async () => {
+    const fake = seeded();
+    fake.logs.get(REGISTRY)!.push(compromise);
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.status).toBe('compromised');
+  });
+  it('is compromised when a report and a transfer both apply, on every route', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(sell());
+    fake.logs.get(REGISTRY)!.push(compromise);
+    const { get } = await api(fake);
+    const isOne = (agent: { agentId: string }) => agent.agentId === '1';
+    expect((await get('/api/agents/1')).body).toMatchObject({ status: 'compromised', operatorChanged: true });
+    expect((await get('/api/agents')).body.agents.find(isOne).status).toBe('compromised');
+    expect((await get(`/api/creators/${CREATOR_A}`)).body.agents.find(isOne).status).toBe('compromised');
+  });
+  it('is active on an unlinked agent, which has no creator to leave', async () => {
+    const { get } = await api();
+    expect((await get('/api/agents/3')).body.status).toBe('active');
+  });
+});
+
+describe('acceptsX402 from the agent file', () => {
+  it('follows x402Support, and is false for a file that cannot be read', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(
+      setUri(1n, fileUri({ name: 'Paid', x402Support: true }), BASE + 1),
+      setUri(2n, 'https://127.0.0.1/agent.json', BASE + 1),
+    );
+    const { get } = await api(fake);
+    const list = (await get('/api/agents')).body.agents;
+    const accepts = (id: string) => list.find((agent: { agentId: string }) => agent.agentId === id).acceptsX402;
+    expect([accepts('1'), accepts('2'), accepts('4')]).toEqual([true, false, false]);
+    expect((await get('/api/agents/1')).body.acceptsX402).toBe(true);
+  });
+  it('serves the sanitised image', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(setUri(1n, fileUri({ image: 'ipfs://bafyabc/a.png' }), BASE + 1), setUri(2n, fileUri({ image: 'http://example.com/a.png' }), BASE + 1));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.image).toBe('https://ipfs.io/ipfs/bafyabc/a.png');
+    expect((await get('/api/agents/2')).body).not.toHaveProperty('image');
+  });
+});
+
+describe('credential kinds', () => {
+  it('marks the link credential human-backed and an issuer credential a milestone', async () => {
+    const fake = seeded();
+    fake.logs.get(REGISTRY)!.push(registryLog('CredentialIssued', { holder: WALLET_A1, serial: 7n }, ts(BASE + 1)));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.credentials).toMatchObject([
+      { serial: 1, kind: 'human-backed', title: 'Human-backed' },
+      { serial: 7, kind: 'milestone', title: 'Credential #7' },
+    ]);
+  });
+  it('keeps a human-backed credential to link to after a rotation revokes the first one', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(setWallet(1n, WALLET_U, BASE + 1));
+    fake.logs.get(REGISTRY)!.push(
+      registryLog('CredentialIssued', { holder: WALLET_U, serial: 4n }, ts(BASE + 2)),
+      registryLog('AgentWalletSynced', { agentId: 1n, creator: CREATOR_A, agentWallet: WALLET_U, serial: 4n }, ts(BASE + 2)),
+      registryLog('CredentialRevoked', { holder: WALLET_A1, serial: 1n }, ts(BASE + 3)),
+    );
+    const { get } = await api(fake);
+    const { credentials } = (await get('/api/agents/1')).body;
+    expect(credentials.find((item: { kind: string; revoked: boolean }) => item.kind === 'human-backed' && !item.revoked).serial).toBe(4);
+  });
+});
+
+describe('penalties on the creator route', () => {
+  const DAY = 86_400;
+  const HALF_LIFE = SCORING_CONFIG.penaltyHalfLifeDays * DAY;
+  const CONFIRMED = BASE + 5;
+
+  function penalised() {
+    const fake = seeded();
+    withThirdCreator(fake);
+    report(fake, WALLET_B1, 7n, BASE + 2);
+    report(fake, WALLET_C1, 8n, CONFIRMED);
+    return fake;
+  }
+  const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+  const penaltyAt = async (seconds: number, fake = penalised()) => {
+    const { get } = await api(fake, { deps: { now: () => seconds * 1000 } });
+    return (await get(`/api/creators/${CREATOR_A}`)).body.penalties[0];
+  };
+
+  it('names the reviews that confirmed it, as links HashScan opens', async () => {
+    const fake = penalised();
+    const [first, second] = fake.logs.get(REPUTATION)!.slice(-2);
+    const penalty = await penaltyAt(CONFIRMED, fake);
+    expect(penalty).toMatchObject({ agentId: '1', category: 'fraud', confirmedAt: iso(CONFIRMED) });
+    expect(penalty.reports).toEqual([
+      { clientAddress: WALLET_B1, feedbackIndex: 7, txId: first!.transaction_hash },
+      { clientAddress: WALLET_C1, feedbackIndex: 8, txId: second!.transaction_hash },
+    ]);
+  });
+  it('falls back to the consensus timestamp for a report with no usable hash', async () => {
+    const fake = penalised();
+    fake.logs.get(REPUTATION)!.at(-1)!.transaction_hash = '0.0.5-1700000000-000000001';
+    const penalty = await penaltyAt(CONFIRMED, fake);
+    expect(penalty.reports[1].txId).toBe(ts(CONFIRMED));
+  });
+  it('gives the next whole half-life after now, by the wall clock', async () => {
+    expect((await penaltyAt(CONFIRMED + 1)).nextHalvingAt).toBe(iso(CONFIRMED + HALF_LIFE));
+    expect((await penaltyAt(CONFIRMED + HALF_LIFE - 1)).nextHalvingAt).toBe(iso(CONFIRMED + HALF_LIFE));
+    expect((await penaltyAt(CONFIRMED + HALF_LIFE)).nextHalvingAt).toBe(iso(CONFIRMED + 2 * HALF_LIFE));
+    expect((await penaltyAt(CONFIRMED + 5 * HALF_LIFE + 1)).nextHalvingAt).toBe(iso(CONFIRMED + 6 * HALF_LIFE));
+  });
+  it('is always in the future, even with the clock behind the chain', async () => {
+    expect((await penaltyAt(CONFIRMED - 1000)).nextHalvingAt).toBe(iso(CONFIRMED + HALF_LIFE));
+  });
+});
+
+describe('scoresStale', () => {
+  const EPOCH_NOW = BASE / EPOCH + 1;
+  const snapshot = (epoch: number, epochSeconds = EPOCH) => ({ epoch, configVersion: SCORING_CONFIG.configVersion, epochSeconds, inputsHash: toHex(1, { size: 32 }), agents: [], creators: [] });
+
+  async function clocked(options: ApiOptions = {}, start = EPOCH_NOW * EPOCH) {
+    let seconds = start;
+    const handle = await api(seeded(), { ...options, deps: { now: () => seconds * 1000 } });
+    const stale = async () => {
+      const [list, detail] = await Promise.all([handle.get('/api/agents'), handle.get('/api/agents/1')]);
+      expect(detail.body.scoresStale).toBe(list.body.scoresStale);
+      return list.body.scoresStale as boolean;
+    };
+    return { ...handle, stale, setClock: (value: number) => (seconds = value) };
+  }
+
+  it('turns true at exactly 2 epochs behind', async () => {
+    const { runtime, stale, setClock } = await clocked();
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW), 1);
+    expect(await stale()).toBe(false);
+    setClock((EPOCH_NOW + 2) * EPOCH - 1);
+    expect(await stale()).toBe(false);
+    setClock((EPOCH_NOW + 2) * EPOCH);
+    expect(await stale()).toBe(true);
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW + 2), 2);
+    expect(await stale()).toBe(false);
+  });
+  it('uses the configured epoch length', async () => {
+    const short = runtimeFor(seeded(), new Store(':memory:'), {}, 60, { now: () => (BASE + 120) * 1000 });
+    short.store.saveSnapshot(snapshot(BASE / 60, 60), 1);
+    expect(short.scoresStale()).toBe(true);
+    const long = runtimeFor(seeded(), new Store(':memory:'), {}, EPOCH, { now: () => (BASE + 120) * 1000 });
+    long.store.saveSnapshot(snapshot(BASE / EPOCH), 1);
+    expect(long.scoresStale()).toBe(false);
+  });
+  it('notices a dead scorer, whose mirror time has stopped moving', async () => {
+    const { runtime, stale, setClock } = await clocked();
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW), 1);
+    const frozen = runtime.view()!.asOf;
+    setClock((EPOCH_NOW + 5) * EPOCH);
+    expect(runtime.view()!.asOf).toBe(frozen);
+    expect(await stale()).toBe(true);
+  });
+  it('does not count a snapshot that was saved but never published', async () => {
+    const { runtime, stale, setClock } = await clocked();
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW - 3), 1);
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW), null);
+    setClock(EPOCH_NOW * EPOCH + 1);
+    expect(await stale()).toBe(true);
+  });
+  it('is not fooled by the far larger epoch numbers of a shorter series', async () => {
+    const { runtime, stale, setClock } = await clocked();
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW), 1);
+    runtime.store.saveSnapshot(snapshot(BASE / 60, 60), 2);
+    setClock((EPOCH_NOW + 2) * EPOCH);
+    expect(await stale()).toBe(true);
+  });
+  it('gives a fresh deployment two epochs, then alarms until something is published', async () => {
+    const start = EPOCH_NOW * EPOCH + 1800;
+    const { runtime, stale, setClock } = await clocked({}, start);
+    expect(await stale()).toBe(false);
+    setClock(start + 2 * EPOCH - 1);
+    expect(await stale()).toBe(false);
+    setClock(start + 2 * EPOCH);
+    expect(await stale()).toBe(true);
+    setClock(start + 1000 * EPOCH);
+    expect(await stale()).toBe(true);
+    runtime.store.saveSnapshot(snapshot(EPOCH_NOW + 1000), 1);
+    expect(await stale()).toBe(false);
+  });
+  it('does not restart the grace period when the process restarts', async () => {
+    const store = new Store(':memory:');
+    const start = EPOCH_NOW * EPOCH;
+    runtimeFor(seeded(), store, {}, EPOCH, { now: () => start * 1000 });
+    const restarted = runtimeFor(seeded(), store, {}, EPOCH, { now: () => (start + 2 * EPOCH) * 1000 });
+    expect(restarted.scoresStale()).toBe(true);
+  });
+  it('alarms even when no sync has ever worked', async () => {
+    const start = EPOCH_NOW * EPOCH;
+    const store = new Store(':memory:');
+    let seconds = start;
+    const { get } = await api(new FakeMirror(), { sync: false, store, deps: { now: () => seconds * 1000 } });
+    expect((await get('/api/agents')).body.scoresStale).toBe(false);
+    seconds = start + 2 * EPOCH;
+    expect((await get('/api/agents')).body).toMatchObject({ agents: [], scoresStale: true });
+  });
+  it('is false after a real publish', async () => {
+    const fake = seeded();
+    fake.consensus = ts(BASE + EPOCH + 5);
+    const runtime = runtimeFor(fake, new Store(':memory:'), {}, EPOCH, { now: () => (BASE + EPOCH + 5) * 1000 });
+    const loop = await loopFor(runtime, new RecordingPublisher(fake));
+    await loop.tick();
+    expect(runtime.scoresStale()).toBe(false);
+  });
+});
+
+describe('humanBacked filter and stats', () => {
+  function withUnlinked() {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(7n, CREATOR_B, BASE - 760, 'Waiting Bot'));
+    return fake;
+  }
+  it('filters only on true', async () => {
+    const { get } = await api(withUnlinked());
+    expect(IDS((await get('/api/agents')).body)).toEqual(['1', '2', '4', '7']);
+    expect(IDS((await get('/api/agents?humanBacked=false')).body)).toEqual(['1', '2', '4', '7']);
+    expect(IDS((await get('/api/agents?humanBacked=true')).body)).toEqual(['1', '2', '4']);
+  });
+  it('T6.9: the toggle has something to hide, including an agent that lost its badge', async () => {
+    const fake = withUnlinked();
+    fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: CREATOR_A, to: STRANGER, tokenId: 4n }, ts(BASE + 1)));
+    const { get } = await api(fake);
+    expect(IDS((await get('/api/agents?humanBacked=true')).body)).toEqual(['1', '2']);
+    expect(IDS((await get('/api/agents?humanBacked=false')).body)).toEqual(['1', '2', '4', '7']);
+  });
+  it('keeps stats global whatever the filters', async () => {
+    const { get } = await api(withUnlinked());
+    const { stats } = (await get('/api/agents')).body;
+    expect(stats).toEqual({ agents: 4, humanBacked: 3, creators: 2, reviewsCounted: 1 });
+    for (const query of ['q=reviewer', 'q=nothing-matches-this', 'humanBacked=true', 'humanBacked=false', 'minScore=100', `owner=${CREATOR_B}`, 'q=reviewer&humanBacked=true&minScore=95']) {
+      const { body } = await get(`/api/agents?${query}`);
+      expect(body.stats, query).toEqual(stats);
+    }
+    expect((await get('/api/agents?q=nothing-matches-this')).body.agents).toEqual([]);
+  });
+});
+
+describe('review transaction IDs', () => {
+  it('passes a 0x hash through', async () => {
+    const fake = seeded();
+    const hash = fake.logs.get(REPUTATION)![0]!.transaction_hash;
+    const { get } = await api(fake);
+    expect((await get('/api/agents/1')).body.reviews.at(-1).txId).toBe(hash);
+  });
+  it('never serves a form HashScan might not open', async () => {
+    for (const bad of ['0.0.5@1700000000.000000001', '0.0.5-1700000000-000000001', `0x${'ab'.repeat(48)}`, '0xabc', '']) {
+      const fake = seeded();
+      const logs = fake.logs.get(REPUTATION)!;
+      logs[0]!.transaction_hash = bad;
+      const { get } = await api(fake);
+      expect((await get('/api/agents/1')).body.reviews.at(-1).txId, bad).toBe(logs[0]!.timestamp);
+    }
+  });
+  it('only ever serves one of the two forms', async () => {
+    const { get } = await api();
+    for (const { txId } of (await get('/api/agents/1')).body.reviews) {
+      expect(txId).toMatch(/^(0x[0-9a-fA-F]{64}|\d+\.\d{9})$/);
+    }
+  });
+});
+
+describe('unlinked agents of verified creators', () => {
+  function discovered() {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(7n, CREATOR_B, BASE - 760, 'Waiting Bot'));
+    return fake;
+  }
+  const one = (body: { agents: { agentId: string }[] }, id: string) => body.agents.find((agent) => agent.agentId === id);
+
+  it('lists them as not human-backed, with no creator', async () => {
+    const { get } = await api(discovered());
+    expect(one((await get('/api/agents')).body, '7')).toMatchObject({
+      name: 'Waiting Bot', owner: CREATOR_B, wallet: CREATOR_B, creator: null, humanBacked: false, creatorScore: null, status: 'active', score: { value: 0, isNew: false },
+    });
+  });
+  it('reads them from logs already ingested, with no extra or topic-filtered Mirror reads', async () => {
+    const fake = discovered();
+    await api(fake);
+    expect(fake.calls.filter((call) => /[?&]topic\d=/.test(call))).toEqual([]);
+    const plain = seeded();
+    await api(plain);
+    expect(fake.calls.length - plain.calls.length).toBeLessThanOrEqual(2);
+  });
+  it('finds an agent minted before its owner verified', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.unshift(...mint(7n, CREATOR_B, BASE - 2000, 'Early Bot'));
+    const { get } = await api(fake);
+    expect(one((await get('/api/agents')).body, '7')).toMatchObject({ creator: null, humanBacked: false });
+  });
+  it('leaves out an agent a stranger minted and transferred to a creator, who never consented', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: WALLET_U, to: CREATOR_B, tokenId: 3n }, ts(BASE - 500)));
+    const { get } = await api(fake);
+    expect(one((await get('/api/agents')).body, '3')).toBeUndefined();
+  });
+  it('gives a stranger no way to add to the list, the stats or a creator\'s resume results', async () => {
+    const fake = seeded();
+    const { get: before } = await api(seeded());
+    for (let id = 0; id < 10; id += 1) {
+      const agentId = BigInt(200 + id);
+      fake.logs.get(IDENTITY)!.push(...mint(agentId, STRANGER, BASE - 700 + id, `Pushed ${id}`));
+      fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: STRANGER, to: CREATOR_B, tokenId: agentId }, ts(BASE - 600 + id)));
+    }
+    const { get } = await api(fake);
+    expect((await get('/api/agents')).body.stats).toEqual((await before('/api/agents')).body.stats);
+    expect(IDS((await get('/api/agents?humanBacked=false')).body)).toEqual(IDS((await before('/api/agents?humanBacked=false')).body));
+    expect(IDS((await get(`/api/agents?owner=${CREATOR_B}`)).body)).toEqual(['2']);
+  });
+  it('serves a transferred-in agent on request, and lists it once its new owner links it', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: WALLET_U, to: CREATOR_B, tokenId: 3n }, ts(BASE - 500)));
+    const { get, runtime } = await api(fake);
+    expect(await get('/api/agents/3')).toMatchObject({ status: 200, body: { owner: CREATOR_B, creator: null } });
+    fake.logs.get(REGISTRY)!.push(registryLog('AgentLinked', { agentId: 3n, creator: CREATOR_B, agentWallet: CREATOR_B, serial: 5n }, ts(BASE + 1)));
+    await runtime.sync();
+    expect(one((await get('/api/agents')).body, '3')).toMatchObject({ creator: CREATOR_B });
+  });
+  it('offers an unlinked agent only to a wallet that can link it', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(
+      ...mint(7n, CREATOR_B, BASE - 760, 'Sold To A Stranger'),
+      identityLog('Transfer', { from: CREATOR_B, to: STRANGER, tokenId: 7n }, ts(BASE - 750)),
+      ...mint(8n, CREATOR_B, BASE - 740, 'Sold To A Creator'),
+      identityLog('Transfer', { from: CREATOR_B, to: CREATOR_A, tokenId: 8n }, ts(BASE - 730)),
+    );
+    const { get } = await api(fake);
+    expect((await get(`/api/agents?owner=${STRANGER}`)).body.agents).toEqual([]);
+    expect((await get(`/api/agents?owner=${CREATOR_B}`)).body.agents.map((agent: { agentId: string }) => agent.agentId)).toEqual(['2']);
+    expect(one((await get(`/api/agents?owner=${CREATOR_A}`)).body, '8')).toMatchObject({ creator: null, owner: CREATOR_A });
+    // Registered by a creator, so still listed. Only the owner filter asks who can link it.
+    expect(one((await get('/api/agents')).body, '7')).toMatchObject({ creator: null, owner: STRANGER });
+  });
+  it('still finds a linked agent under a new owner who is no creator', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(identityLog('Transfer', { from: CREATOR_B, to: STRANGER, tokenId: 2n }, ts(BASE - 500)));
+    const { get } = await api(fake);
+    expect(one((await get(`/api/agents?owner=${STRANGER}`)).body, '2')).toMatchObject({ creator: CREATOR_B, status: 'operator-changed' });
+  });
+  it('leaves out other projects\' agents in the shared registry', async () => {
+    const { get } = await api(discovered());
+    expect(one((await get('/api/agents')).body, '3')).toBeUndefined();
+  });
+  it('moves an agent to linked once it is linked', async () => {
+    const fake = discovered();
+    const { get, runtime } = await api(fake);
+    fake.logs.get(REGISTRY)!.push(registryLog('AgentLinked', { agentId: 7n, creator: CREATOR_B, agentWallet: CREATOR_B, serial: 5n }, ts(BASE + 1)));
+    await runtime.sync();
+    expect(one((await get('/api/agents')).body, '7')).toMatchObject({ creator: CREATOR_B, humanBacked: true });
+  });
+  it('keeps them out of snapshots and leaves the published hash alone', async () => {
+    const epoch = BASE / EPOCH;
+    const fake = seeded();
+    const { runtime, get } = await api(fake);
+    const before = runtime.buildEpoch(epoch).snapshot;
+
+    fake.logs.get(IDENTITY)!.push(...mint(7n, CREATOR_B, BASE - 1, 'Waiting Bot'));
+    await runtime.sync();
+    expect(IDS((await get('/api/agents')).body)).toContain('7');
+    const after = runtime.buildEpoch(epoch).snapshot;
+    expect(after.agents.map((agent) => agent.agentId)).toEqual(['1', '2', '4']);
+    expect(after.inputsHash).toBe(before.inputsHash);
+  });
+  it('does not hold an epoch back on a review of one that cannot be fetched', async () => {
+    const fake = discovered();
+    fake.review({ agentId: 7n, client: WALLET_B1, index: 1n, value: 50n, at: BASE - 100 });
+    fake.forced.set(`/api/v1/topics/${REVIEWS_TOPIC}/messages/4`, 503);
+    const { runtime } = await api(fake);
+    expect(runtime.buildEpoch(BASE / EPOCH).pending).toBe(0);
+  });
+  it('lets onboarding find an unlinked agent by owner, in any case', async () => {
+    const { get } = await api(discovered());
+    const upper = `0x${CREATOR_B.slice(2).toUpperCase()}`;
+    expect(IDS((await get(`/api/agents?owner=${CREATOR_B}`)).body)).toEqual(['2', '7']);
+    expect(IDS((await get(`/api/agents?owner=${upper}`)).body)).toEqual(['2', '7']);
+    expect((await get(`/api/agents?owner=${CREATOR_B}`)).body.agents.filter((agent: { creator: string | null }) => agent.creator === null).map((agent: { agentId: string }) => agent.agentId)).toEqual(['7']);
+    expect((await get(`/api/agents?owner=${STRANGER}`)).body.agents).toEqual([]);
+  });
+  it('rejects an owner that is not an address', async () => {
+    const { get } = await api();
+    expect(await get('/api/agents?owner=nope')).toMatchObject({ status: 400, body: { code: 'BAD_REQUEST' } });
+  });
+});
+
+describe('agent ID 0 and creator 404s', () => {
+  function withAgentZero(linked: boolean) {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(0n, CREATOR_B, BASE - 760, 'Agent Zero'));
+    if (linked) fake.logs.get(REGISTRY)!.push(registryLog('AgentLinked', { agentId: 0n, creator: CREATOR_B, agentWallet: CREATOR_B, serial: 6n }, ts(BASE - 750)));
+    return fake;
+  }
+  it('serves a linked agent 0, with its reviews', async () => {
+    const fake = withAgentZero(true);
+    fake.review({ agentId: 0n, client: WALLET_A1, index: 1n, value: 80n, at: BASE - 100 });
+    const { get } = await api(fake);
+    expect((await get('/api/agents/0')).body).toMatchObject({ status: 'active', agentId: '0', name: 'Agent Zero', creator: CREATOR_B, humanBacked: true, reviews: [{ feedbackIndex: 1 }] });
+    expect((await get('/api/agents/000')).body.agentId).toBe('0');
+    expect(IDS((await get('/api/agents')).body)).toContain('0');
+    expect(IDS((await get(`/api/creators/${CREATOR_B}`)).body)).toContain('0');
+  });
+  it('serves an unlinked agent 0 from the list and by ID', async () => {
+    const { get } = await api(withAgentZero(false));
+    expect(IDS((await get('/api/agents')).body)).toContain('0');
+    expect((await get('/api/agents/0')).body).toMatchObject({ agentId: '0', creator: null, humanBacked: false });
+  });
+  it('answers a stranger\'s agent 0 through the lookup path', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(0n, WALLET_U, BASE - 760, 'Agent Zero'));
+    const { get } = await api(fake);
+    expect((await get('/api/agents/0')).status).toBe(200);
+  });
+  it('answers 404 for an agent 0 that does not exist', async () => {
+    const { get } = await api();
+    expect(await get('/api/agents/0')).toMatchObject({ status: 404, body: { code: 'NOT_FOUND' } });
+  });
+  it('answers 404 as an ApiError for a wallet that owns agents but never verified', async () => {
+    const { get } = await api();
+    expect(await get(`/api/creators/${WALLET_U}`)).toEqual(expect.objectContaining({ status: 404, body: { code: 'NOT_FOUND', message: 'Creator not found.' } }));
+  });
+  it('answers 404 for every creator before the first sync', async () => {
+    const { get } = await api(new FakeMirror(), { sync: false });
+    expect(await get(`/api/creators/${CREATOR_A}`)).toMatchObject({ status: 404, body: { code: 'NOT_FOUND' } });
+  });
+  it('answers 200 for a verified creator with no agents', async () => {
+    const fake = seeded();
+    fake.logs.get(REGISTRY)!.push(registryLog('CreatorRegistered', { nullifierHash: toHex(3, { size: 32 }), wallet: CREATOR_C }, ts(BASE - 500)));
+    const { get } = await api(fake);
+    expect(await get(`/api/creators/${CREATOR_C}`)).toMatchObject({ status: 200, body: { address: CREATOR_C, agents: [], penalties: [] } });
+  });
+});
+
+describe('hostile agent files', () => {
+  /** Under the 256 KB cap, with every field a list response carries sized to fill it. */
+  const hostile = () => JSON.stringify({
+    name: 'n'.repeat(60_000),
+    description: 'd'.repeat(60_000),
+    image: `https://example.com/${'i'.repeat(60_000)}.png`,
+    tags: Array.from({ length: 6_000 }, (_, index) => `tag-${index}`),
+    services: [{ name: 'A2A', endpoint: `https://a2a.example/${'e'.repeat(10_000)}` }, { name: 'MCP', endpoint: 'https://mcp.example' }],
+  });
+  const uriOf = (body: string) => `data:application/json;base64,${Buffer.from(body).toString('base64')}`;
+  function creatorsAgents(count: number) {
+    const fake = seeded();
+    for (let id = 0; id < count; id += 1) {
+      const agentId = BigInt(300 + id);
+      fake.logs.get(IDENTITY)!.push(
+        identityLog('Transfer', { from: addr(0), to: CREATOR_B, tokenId: agentId }, ts(BASE - 700 + id)),
+        identityLog('Registered', { agentId, agentURI: uriOf(hostile()), owner: CREATOR_B }, ts(BASE - 700 + id)),
+      );
+    }
+    return fake;
+  }
+
+  it('bounds every field of a profile, however large the file', () => {
+    const profile = parseAgentProfile(hostile());
+    expect(profile.name!.length).toBeLessThanOrEqual(256);
+    expect(profile.description!.length).toBeLessThanOrEqual(4000);
+    expect(profile.image).toBeUndefined();
+    expect(profile.tags.length).toBeLessThanOrEqual(32);
+    expect(profile.endpoints).toEqual({ mcp: 'https://mcp.example' });
+    expect(JSON.stringify(profile).length).toBeLessThan(8_000);
+  });
+  it('drops tags too long to be tags, and never splits a character', () => {
+    const profile = parseAgentProfile(JSON.stringify({ name: `${'n'.repeat(255)}\u{1F600}`, tags: ['t'.repeat(65), 'defi'] }));
+    expect(profile.name).toBe('n'.repeat(255));
+    expect(profile.tags).toEqual(['defi']);
+  });
+  it('leaves a file the agent-file route accepts as it is', () => {
+    const description = 'd'.repeat(3_500);
+    expect(parseAgentProfile(JSON.stringify({ name: 'Ordinary', description, tags: ['a', 'b'] }))).toMatchObject({ name: 'Ordinary', description, tags: ['a', 'b'] });
+  });
+  it('keeps a list of oversized files small', async () => {
+    const { app } = await api(creatorsAgents(5));
     const response = await app.inject({ method: 'GET', url: '/api/agents' });
-    expect(response.json()).toEqual({ agents: [], stats: { agents: 0, humanBacked: 0, creators: 0, reviewsCounted: 0 } });
+    expect(response.json().agents).toHaveLength(8);
+    expect(response.payload.length).toBeLessThan(60_000);
+  });
+  it('reads and parses each file once, not once per request', async () => {
+    const { get, runtime } = await api(creatorsAgents(5));
+    await get('/api/agents');
+    const reads = vi.spyOn(runtime.store, 'agentFile');
+    const parses = vi.spyOn(JSON, 'parse');
+    await get('/api/agents?q=nothing-matches');
+    await get('/api/agents?humanBacked=true');
+    // Longer than any response here, so this counts agent files and not this test reading a reply.
+    const parsed = parses.mock.calls.filter(([text]) => typeof text === 'string' && text.length >= hostile().length).length;
+    parses.mockRestore();
+    expect(reads).not.toHaveBeenCalled();
+    expect(parsed).toBe(0);
+  });
+  it('picks up a file that could not be read at first, once a sync finds it', async () => {
+    const fake = seeded();
+    const uri = 'https://files.example/late.json';
+    fake.logs.get(IDENTITY)!.push(
+      identityLog('Transfer', { from: addr(0), to: CREATOR_B, tokenId: 7n }, ts(BASE - 700)),
+      identityLog('Registered', { agentId: 7n, agentURI: uri, owner: CREATOR_B }, ts(BASE - 700)),
+    );
+    const { get, runtime } = await api(fake);
+    expect((await get('/api/agents/7')).body.name).toBe('Agent #7');
+    runtime.store.saveAgentFile(uri, JSON.stringify({ name: 'Found Later' }), 1);
+    expect((await get('/api/agents/7')).body.name).toBe('Found Later');
+  });
+  it('serves a new file when an agent changes its URI', async () => {
+    const fake = seeded();
+    const { get, runtime } = await api(fake);
+    expect((await get('/api/agents/1')).body.name).toBe('TradeBot A1');
+    fake.logs.get(IDENTITY)!.push(identityLog('URIUpdated', { agentId: 1n, newURI: agentUri('Renamed'), updatedBy: CREATOR_A }, ts(BASE + 1)));
+    await runtime.sync();
+    expect((await get('/api/agents/1')).body.name).toBe('Renamed');
+  });
+});
+describe('reviews that make no progress', () => {
+  const NOWHERE = addr(0xdead);
+  const proof = `${account(WALLET_B1)}-${BASE - 800}-000000009`;
+
+  /** Twelve reviews of a stranger's agent whose accounts Mirror does not have, then one on a creator's. */
+  function blocked(blockers = 12) {
+    const fake = seeded();
+    fake.payment(WALLET_B1, WALLET_A1, BASE - 800, proof);
+    fake.logs.get(IDENTITY)!.push(
+      ...mint(9n, STRANGER, BASE - 900, 'Blocker'),
+      setWallet(9n, NOWHERE, BASE - 899),
+      ...mint(7n, CREATOR_B, BASE - 760, 'Waiting Bot'),
+    );
+    for (let index = 1; index <= blockers; index += 1) {
+      fake.review({ agentId: 9n, client: addr(0xd000 + index), index: BigInt(index), value: 100n, at: BASE - 600 + index, proof });
+    }
+    return fake;
+  }
+  const accountReads = (fake: FakeMirror) => fake.calls.filter((call) => call.startsWith('/api/v1/accounts/')).length;
+
+  it('cannot hold later reviews back by having no Hedera account', async () => {
+    const fake = blocked();
+    const { get, runtime } = await api(fake);
+    await get('/api/agents/9');
+    fake.review({ agentId: 7n, client: WALLET_U, index: 1n, value: 0n, at: BASE + 5 });
+    for (let tick = 1; tick <= 3; tick += 1) {
+      fake.consensus = ts(BASE + 10 + tick);
+      await runtime.sync();
+    }
+    expect((await get('/api/agents/7')).body.reviews).toHaveLength(1);
+    expect((await get('/api/agents/9')).body.reviews).toHaveLength(12);
+  });
+  it('stops reading the mirror for them within an epoch', async () => {
+    const fake = blocked();
+    const { get, runtime } = await api(fake);
+    await get('/api/agents/9');
+    for (let tick = 1; tick <= 3; tick += 1) {
+      fake.consensus = ts(BASE + 10 + tick);
+      await runtime.sync();
+    }
+    const before = accountReads(fake);
+    for (let tick = 4; tick <= 10; tick += 1) {
+      fake.consensus = ts(BASE + 10 + tick);
+      await runtime.sync();
+    }
+    expect(accountReads(fake)).toBe(before);
+  });
+  it('still gets through when the misses expire at an epoch boundary', async () => {
+    const fake = blocked(25);
+    const { get, runtime } = await api(fake);
+    await get('/api/agents/9');
+    for (let tick = 1; tick <= 3; tick += 1) {
+      fake.consensus = ts(BASE + 10 + tick);
+      await runtime.sync();
+    }
+    fake.consensus = ts(BASE + EPOCH + 1);
+    await runtime.sync();
+    fake.review({ agentId: 7n, client: WALLET_U, index: 1n, value: 0n, at: BASE + EPOCH + 2 });
+    for (let tick = 1; tick <= 4; tick += 1) {
+      fake.consensus = ts(BASE + EPOCH + 10 + tick);
+      await runtime.sync();
+    }
+    expect((await get('/api/agents/7')).body.reviews).toHaveLength(1);
+  });
+});
+describe('the live view never moves backwards', () => {
+  function withColdAgent() {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(9n, STRANGER, BASE - 700, 'Cold'));
+    fake.review({ agentId: 9n, client: WALLET_U, index: 1n, value: 40n, at: BASE - 600 });
+    return fake;
+  }
+  const compromise = (agentId: bigint, at: number) => registryLog('AgentCompromised', { agentId, creator: CREATOR_A, timestamp: BigInt(at) }, ts(at));
+
+  it('keeps a compromise a sync found while a lookup was waiting on the mirror', async () => {
+    const fake = withColdAgent();
+    const { get, runtime } = await api(fake);
+    const reached = fake.hold(/\/messages\/4$/);
+    const visit = get('/api/agents/9');
+    const release = await reached;
+
+    fake.logs.get(REGISTRY)!.push(compromise(1n, BASE + 15));
+    fake.consensus = ts(BASE + 20);
+    await runtime.sync();
+    expect((await get('/api/agents/1')).body).toMatchObject({ status: 'compromised', updatedAt: toIso(ts(BASE + 20)) });
+
+    release();
+    expect(await visit).toMatchObject({ status: 200, body: { agentId: '9', reviews: [{ value: 40 }] } });
+    expect((await get('/api/agents/1')).body).toMatchObject({ status: 'compromised', updatedAt: toIso(ts(BASE + 20)) });
+    expect(runtime.view()!.asOf).toBe(ts(BASE + 20));
+  });
+  it('does not go back when a sync reads a mirror that is behind the last one', async () => {
+    const fake = seeded();
+    const { get, runtime } = await api(fake);
+    fake.logs.get(REGISTRY)!.push(compromise(1n, BASE + 15));
+    fake.consensus = ts(BASE + 20);
+    await runtime.sync();
+    fake.consensus = ts(BASE + 12);
+    await runtime.sync();
+    expect((await get('/api/agents/1')).body.status).toBe('compromised');
+    expect(runtime.view()!.asOf).toBe(ts(BASE + 20));
+  });
+  it('does not go back across a restart either', async () => {
+    const fake = seeded();
+    const store = new Store(':memory:');
+    const runtime = runtimeFor(fake, store);
+    fake.consensus = ts(BASE + 20);
+    await runtime.sync();
+    fake.consensus = ts(BASE + 12);
+    const restarted = runtimeFor(fake, store);
+    await restarted.sync();
+    expect(restarted.view()!.asOf).toBe(ts(BASE + 20));
+  });
+  it('still moves forward after a lookup', async () => {
+    const fake = withColdAgent();
+    const { get, runtime } = await api(fake);
+    await get('/api/agents/9');
+    expect(runtime.view()!.asOf).toBe(ts(BASE + 10));
+    fake.consensus = ts(BASE + 30);
+    await runtime.sync();
+    expect(runtime.view()!.asOf).toBe(ts(BASE + 30));
+  });
+});
+describe('read route limits', () => {
+  const LIMIT = { max: 3, timeWindow: 60_000 };
+  const mirrorCalls = (fake: FakeMirror) => fake.calls.length;
+
+  /** A stranger's agent with reviews nothing has fetched yet. */
+  function spammed(reviews: number) {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(9n, STRANGER, BASE - 700, 'Spammed'));
+    for (let index = 1; index <= reviews; index += 1) {
+      fake.review({ agentId: 9n, client: WALLET_U, index: BigInt(index), value: 1n, at: BASE - 600 + index });
+    }
+    return fake;
+  }
+  function strangers(count: number) {
+    const fake = seeded();
+    for (let id = 0; id < count; id += 1) {
+      fake.logs.get(IDENTITY)!.push(...mint(BigInt(100 + id), STRANGER, BASE - 700 + id, `Bot ${id}`));
+    }
+    return fake;
+  }
+
+  it('answers 429 as an ApiError with retry-after, per route and per client', async () => {
+    const { get } = await api(seeded(), { rateLimits: { agentListByIp: LIMIT, agentByIp: LIMIT, creatorByIp: LIMIT } });
+    for (const url of ['/api/agents', '/api/agents/1', `/api/creators/${CREATOR_A}`]) {
+      for (let i = 0; i < 3; i += 1) expect((await get(url)).status).toBe(200);
+      const refused = await get(url);
+      expect(refused).toMatchObject({ status: 429, body: { code: 'RATE_LIMITED', message: expect.any(String) } });
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+      expect((await get(url, '203.0.113.9')).status).toBe(200);
+    }
+  });
+  it('leaves room for the debounced Explorer at its fastest: 200 searches in a minute', async () => {
+    const { get } = await api();
+    for (let i = 0; i < 200; i += 1) expect((await get(`/api/agents?q=${i}`)).status).toBe(200);
+  });
+  it('asks the mirror nothing for an agent that does not exist', async () => {
+    const fake = seeded();
+    const { get } = await api(fake);
+    const before = mirrorCalls(fake);
+    for (let id = 500; id < 520; id += 1) expect((await get(`/api/agents/${id}`)).status).toBe(404);
+    expect(mirrorCalls(fake)).toBe(before);
+  });
+  it('asks the mirror nothing for repeat visits to a looked-up agent, and spends no allowance on them', async () => {
+    const fake = spammed(2);
+    const { get } = await api(fake, { rateLimits: { agentLookupByIp: { max: 1, timeWindow: 60_000 } } });
+    expect((await get('/api/agents/9')).status).toBe(200);
+    const before = mirrorCalls(fake);
+    for (let i = 0; i < 20; i += 1) expect((await get('/api/agents/9')).status).toBe(200);
+    expect(mirrorCalls(fake)).toBe(before);
+  });
+  it('spends no allowance on linked agents or unlinked agents of creators', async () => {
+    const fake = seeded();
+    fake.logs.get(IDENTITY)!.push(...mint(7n, CREATOR_B, BASE - 760, 'Waiting Bot'));
+    const { get } = await api(fake, { rateLimits: { agentLookupByIp: { max: 1, timeWindow: 60_000 }, agentLookupTotal: { max: 1, timeWindow: 60_000 } } });
+    for (let i = 0; i < 5; i += 1) {
+      expect((await get('/api/agents/1')).status).toBe(200);
+      expect((await get('/api/agents/7')).status).toBe(200);
+    }
+  });
+  it('limits how many new agents one client can look up', async () => {
+    const { get } = await api(strangers(5), { rateLimits: { agentLookupByIp: LIMIT } });
+    const statuses = [];
+    for (let id = 100; id < 105; id += 1) statuses.push((await get(`/api/agents/${id}`)).status);
+    expect(statuses).toEqual([200, 200, 200, 429, 429]);
+    expect((await get('/api/agents/1')).status).toBe(200);
+  });
+  it('limits lookups across clients, so many addresses cannot add up', async () => {
+    const { get } = await api(strangers(5), { rateLimits: { agentLookupTotal: LIMIT } });
+    const responses = [];
+    for (let id = 100; id < 105; id += 1) responses.push(await get(`/api/agents/${id}`, `203.0.113.${id}`));
+    expect(responses.map((item) => item.status)).toEqual([200, 200, 200, 503, 503]);
+    expect(responses[3]).toMatchObject({ body: { code: 'RATE_LIMITED', message: expect.any(String) } });
+    expect(Number(responses[3]!.headers['retry-after'])).toBeGreaterThan(0);
+  });
+  it('shares one set of reads between simultaneous visitors to an agent', async () => {
+    const fake = spammed(3);
+    const { get } = await api(fake);
+    const before = mirrorCalls(fake);
+    const visits = await Promise.all(Array.from({ length: 8 }, () => get('/api/agents/9')));
+    expect(visits.map((item) => item.status)).toEqual(Array(8).fill(200));
+    expect(mirrorCalls(fake) - before).toBe(3);
+  });
+  it('caps the reads one request can cause, however many reviews the agent has', async () => {
+    const fake = spammed(100);
+    const { get } = await api(fake);
+    const before = mirrorCalls(fake);
+    const { status, body } = await get('/api/agents/9');
+    expect(status).toBe(200);
+    expect(mirrorCalls(fake) - before).toBeLessThanOrEqual(10);
+    expect(body.reviews.length).toBeLessThanOrEqual(10);
+  });
+  it('fills the remaining reviews in over later syncs, a capped number at a time', async () => {
+    const fake = spammed(25);
+    const { get, runtime } = await api(fake);
+    await get('/api/agents/9');
+    const before = mirrorCalls(fake);
+    await runtime.sync();
+    const perSync = fake.calls.slice(before).filter((call) => call.includes('/messages/')).length;
+    expect(perSync).toBeLessThanOrEqual(10);
+    await runtime.sync();
+    expect((await get('/api/agents/9')).body.reviews).toHaveLength(25);
+  });
+  it('does not let a heavily reviewed agent someone visited hold the epoch up', async () => {
+    const fake = spammed(100);
+    fake.consensus = ts(BASE + EPOCH + 5);
+    const runtime = runtimeFor(fake);
+    const publisher = new RecordingPublisher(fake);
+    const loop = await loopFor(runtime, publisher);
+    await loop.tick();
+    runtime.store.trackAgent('9', 10);
+    const before = mirrorCalls(fake);
+    await loop.tick();
+    expect(fake.calls.slice(before).filter((call) => call.includes('/messages/')).length).toBeLessThanOrEqual(10);
+    expect(publisher.published.some((message) => message.includes('"epoch"'))).toBe(true);
+  });
+  it('keeps the set of visited agents bounded, newest first', async () => {
+    const fake = strangers(4);
+    const { get, runtime } = await api(fake, { deps: { maxTrackedAgents: 2 } });
+    for (let id = 100; id < 104; id += 1) expect((await get(`/api/agents/${id}`)).status).toBe(200);
+    expect(runtime.store.trackedAgents().sort()).toEqual(['102', '103']);
+    expect(runtime.view()!.result.agents.map((agent) => agent.agentId)).not.toContain('100');
+  });
+  it('re-serves an agent that fell out of the bound from cached facts', async () => {
+    const fake = spammed(2);
+    fake.logs.get(IDENTITY)!.push(...mint(101n, STRANGER, BASE - 690, 'Other'));
+    const { get, runtime } = await api(fake, { deps: { maxTrackedAgents: 1 } });
+    await get('/api/agents/9');
+    await get('/api/agents/101');
+    expect(runtime.store.trackedAgents()).toEqual(['101']);
+    const before = mirrorCalls(fake);
+    expect((await get('/api/agents/9')).body.reviews).toHaveLength(2);
+    expect(mirrorCalls(fake)).toBe(before);
+  });
+  it('answers CHAIN_ERROR when the lookup cannot reach the mirror, and frees its slot', async () => {
+    const fake = spammed(2);
+    const { get } = await api(fake, { rateLimits: { agentLookupTotal: { max: 100, timeWindow: 60_000 } } });
+    fake.failing = true;
+    // More failures than the gate has slots, so one leaked per failure would end in a 503.
+    for (let i = 0; i < 3; i += 1) {
+      expect(await get('/api/agents/9')).toMatchObject({ status: 502, body: { code: 'CHAIN_ERROR' } });
+    }
+    fake.failing = false;
+    expect((await get('/api/agents/9')).status).toBe(200);
   });
 });

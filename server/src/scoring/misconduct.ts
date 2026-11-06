@@ -1,7 +1,14 @@
 import type { Address } from '@reputed/shared';
 import type { ScoringConfig } from './config.ts';
 import { normalizeTag } from './filter.ts';
-import { addDays, ageInDays, compareConsensus, type ConsensusTimestamp } from './time.ts';
+import {
+  addDays,
+  ageInDays,
+  compareConsensus,
+  SECONDS_PER_DAY,
+  toNanos,
+  type ConsensusTimestamp,
+} from './time.ts';
 import type { AgentInput, ClassifiedReview, ConfirmedPenalty } from './types.ts';
 
 export function round2(value: number): number {
@@ -20,6 +27,18 @@ export function decayedPoints(
   config: ScoringConfig,
 ): number {
   return round2(basePoints * decay(ageInDays(confirmedAt, now), config.penaltyHalfLifeDays));
+}
+
+/** The first whole half-life after confirmedAt that is strictly later than now. */
+export function nextHalvingAt(
+  confirmedAt: ConsensusTimestamp,
+  now: ConsensusTimestamp,
+  config: ScoringConfig,
+): ConsensusTimestamp {
+  const halfLife = BigInt(Math.round(config.penaltyHalfLifeDays * SECONDS_PER_DAY)) * 1_000_000_000n;
+  const elapsed = toNanos(now) - toNanos(confirmedAt);
+  const halvings = elapsed < 0n ? 1n : elapsed / halfLife + 1n;
+  return addDays(confirmedAt, Number(halvings) * config.penaltyHalfLifeDays);
 }
 
 /**
@@ -100,6 +119,12 @@ export function confirmMisconduct(
         firstReportAt,
         confirmedAt: at,
         reporters: reporters.sort(),
+        reports: open.map(({ client, feedbackIndex, txHash, timestamp }) => ({
+          client,
+          feedbackIndex,
+          txHash,
+          timestamp,
+        })),
         countsAgainstCreator: countsAgainstCreator(firstReportAt, agent?.compromisedAt ?? null),
         points: decayedPoints(basePoints, at, now, config),
       });

@@ -4,15 +4,16 @@ import { HumanBackedBadge } from './HumanBackedBadge';
 import { ScoreRing } from './ScoreRing';
 import { TierBadge } from './TierBadge';
 
-function isWebUrl(url: string | undefined): url is string {
-  return Boolean(url && (url.startsWith('https://') || url.startsWith('http://')));
+// https only: the server turns ipfs:// into an https gateway URL, and http images would be blocked as mixed content.
+function isHttpsUrl(url: string | undefined): url is string {
+  return Boolean(url?.startsWith('https://'));
 }
 
 export function AgentCard({ agent }: { agent: AgentSummary }) {
   return (
     <Link href={`/agent/${agent.agentId}`} className="card agent-card">
       <div className="agent-card-head">
-        {isWebUrl(agent.image) ? (
+        {isHttpsUrl(agent.image) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img className="agent-image" src={agent.image} alt="" width={48} height={48} loading="lazy" />
         ) : (

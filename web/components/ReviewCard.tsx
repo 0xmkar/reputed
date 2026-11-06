@@ -20,9 +20,28 @@ function reviewFileHref(uri: string): string | null {
   return hcs?.[1] ? hashscan.topic(hcs[1]) : null;
 }
 
+function ReviewResponseBlock({ response }: { response: ReviewResponse }) {
+  const file = fileHref(response.uri);
+  return (
+    <div className="review-response">
+      <div className="row muted">
+        <span>Agent response from</span>
+        <AddressChip address={response.responder} />
+        <span>{formatDate(response.createdAt)}</span>
+      </div>
+      {response.text && <p>{response.text}</p>}
+      {file && (
+        <a href={file} target="_blank" rel="noreferrer">
+          Response file
+        </a>
+      )}
+    </div>
+  );
+}
+
 export function ReviewCard({ review }: { review: Review }) {
   const fileHref = reviewFileHref(review.feedbackUri);
-  // Review values are shown on a 0-100 bar; anything outside is clamped for the bar only.
+  // The server normalises review values to 0-100; the clamp only guards the bar against bad data.
   const barWidth = Math.min(100, Math.max(0, review.value));
   return (
     <article className={`card review-card${review.counted ? '' : ' is-excluded'}`}>
@@ -57,6 +76,8 @@ export function ReviewCard({ review }: { review: Review }) {
       {!review.counted && review.exclusionReason && (
         <p className="muted">Not counted: {EXCLUSION_TEXT[review.exclusionReason]}.</p>
       )}
+
+      {review.response && <ReviewResponseBlock response={review.response} />}
 
       <footer className="review-foot">
         <span className="muted">{formatDate(review.createdAt)}</span>

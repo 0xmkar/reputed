@@ -18,6 +18,12 @@ export function CredentialCard({ credential }: { credential: Credential }) {
           <dt>Issued</dt>
           <dd>{formatDate(credential.issuedAt)}</dd>
         </div>
+        {credential.issuer && (
+          <div>
+            <dt>Issuer</dt>
+            <dd className="mono">{credential.issuer}</dd>
+          </div>
+        )}
         <div>
           <dt>Serial</dt>
           <dd className="mono">#{credential.serial}</dd>

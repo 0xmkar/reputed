@@ -169,3 +169,6 @@ h1 { font-size: 1.75rem; margin: 0 0 0.5rem; }
 .cost-hint { font-size: 0.8rem; }
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 16px; text-align: center; color: var(--muted); }
 .empty-state p { margin: 0; }
+
+.review-response { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.review-response p { margin: 0; }

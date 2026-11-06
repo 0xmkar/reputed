@@ -5,6 +5,7 @@ import type { AgentSummary, Tier } from '@reputed/shared';
 import { useAgents } from '@/lib/useAgents';
 import { AgentGrid } from '@/components/AgentGrid';
 import { EmptyState } from '@/components/EmptyState';
+import { StaleScoresChip } from '@/components/StaleScoresChip';
 import { StatsStrip } from '@/components/StatsStrip';
 
 type Sort = 'score' | 'reviews' | 'newest';
@@ -23,6 +24,7 @@ export default function ExplorePage() {
   const [humanBacked, setHumanBacked] = useState(true);
   const [minScore, setMinScore] = useState(0);
   const [tiers, setTiers] = useState<Tier[]>([]);
+  const [x402Only, setX402Only] = useState(false);
   const [sort, setSort] = useState<Sort>('score');
 
   // Wait for a pause in typing before asking the server.
@@ -37,8 +39,9 @@ export default function ExplorePage() {
     if (!data) return undefined;
     return data.agents
       .filter((a) => tiers.length === 0 || tiers.includes(a.score.tier))
+      .filter((a) => !x402Only || a.acceptsX402)
       .toSorted(SORTS[sort].compare);
-  }, [data, tiers, sort]);
+  }, [data, tiers, x402Only, sort]);
 
   function reset() {
     setSearch('');
@@ -46,11 +49,13 @@ export default function ExplorePage() {
     setHumanBacked(true);
     setMinScore(0);
     setTiers([]);
+    setX402Only(false);
   }
 
   return (
     <section>
       <h1>Explore agents</h1>
+      {data?.scoresStale && <StaleScoresChip />}
       <StatsStrip stats={data?.stats} />
 
       <div className="filters">
@@ -65,6 +70,10 @@ export default function ExplorePage() {
         <label className="check">
           <input type="checkbox" checked={humanBacked} onChange={(e) => setHumanBacked(e.target.checked)} />
           Human-backed only
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={x402Only} onChange={(e) => setX402Only(e.target.checked)} />
+          Accepts x402
         </label>
         <label className="slider">
           <span>Minimum score: {minScore}</span>

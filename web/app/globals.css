@@ -236,3 +236,8 @@ details summary { cursor: pointer; }
 .table th { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
 .table tbody tr:last-child td { border-bottom: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.review-response { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.review-response p { margin: 0; }
+
+.stale-chip { display: inline-block; margin-top: 16px; }

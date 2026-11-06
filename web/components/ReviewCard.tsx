@@ -1,27 +1,12 @@
-import { hashscan, type ExclusionReason, type Review } from '@reputed/shared';
+import { hashscan, type Review } from '@reputed/shared';
+import { EXCLUSION_TEXT } from '@/lib/exclusion';
+import { fileHref } from '@/lib/uri';
 import { formatDate } from '@/lib/format';
 import { AddressChip } from './AddressChip';
 import { CheckIcon, CrossIcon } from './icons';
 
-const EXCLUSION_TEXT: Record<ExclusionReason, string> = {
-  revoked: 'the reviewer revoked this review',
-  'hash-mismatch': 'the review file does not match its on-chain hash',
-  'not-human-backed': 'the reviewer is not human-backed',
-  'payment-not-found': 'no matching payment was found',
-  'same-creator': 'the reviewer shares the agent’s creator',
-};
-
-const HCS_URI = /^hcs:\/\/(\d+\.\d+\.\d+)\/(\d+)$/;
-
-/** Where to send someone who wants to read the review file: a web URL as is, an hcs://<topic>/<sequence> URI as its HashScan topic page. */
-function reviewFileHref(uri: string): string | null {
-  if (uri.startsWith('https://') || uri.startsWith('http://')) return uri;
-  const hcs = HCS_URI.exec(uri);
-  return hcs?.[1] ? hashscan.topic(hcs[1]) : null;
-}
-
 export function ReviewCard({ review }: { review: Review }) {
-  const fileHref = reviewFileHref(review.feedbackUri);
+  const reviewFile = fileHref(review.feedbackUri);
   // Review values are shown on a 0-100 bar; anything outside is clamped for the bar only.
   const barWidth = Math.min(100, Math.max(0, review.value));
   return (
@@ -66,8 +51,8 @@ export function ReviewCard({ review }: { review: Review }) {
         <a href={hashscan.tx(review.txId)} target="_blank" rel="noreferrer">
           Transaction
         </a>
-        {fileHref && (
-          <a href={fileHref} target="_blank" rel="noreferrer">
+        {reviewFile && (
+          <a href={reviewFile} target="_blank" rel="noreferrer">
             Review file
           </a>
         )}

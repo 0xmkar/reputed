@@ -6,6 +6,7 @@ import { hashscan } from '@reputed/shared';
 import { shortAddress } from '@/lib/format';
 import { useCreator } from '@/lib/useCreator';
 import { useToast } from './Toasts';
+import { VerifiedCreatorBadge } from './VerifiedCreatorBadge';
 
 export function WalletButton() {
   const { address, isConnected } = useAccount();
@@ -53,7 +54,7 @@ export function WalletButton() {
     <div className="wallet" ref={menuRef}>
       <button type="button" className="btn btn-outline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="mono">{shortAddress(address)}</span>
-        {creator.data && <span className="badge badge-verified">✓ Verified creator</span>}
+        {creator.data && <VerifiedCreatorBadge />}
       </button>
       {open && (
         <div className="menu" role="menu">

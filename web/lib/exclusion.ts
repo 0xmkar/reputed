@@ -7,4 +7,5 @@ export const EXCLUSION_TEXT: Record<ExclusionReason, string> = {
   'not-human-backed': 'the reviewer is not human-backed',
   'payment-not-found': 'no matching payment was found',
   'same-creator': 'the reviewer shares the agent’s creator',
+  'invalid-value': 'its on-chain value is outside 0 to 100',
 };

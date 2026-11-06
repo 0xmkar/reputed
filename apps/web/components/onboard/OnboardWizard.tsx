@@ -3,7 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Address } from 'viem';
-import { clearDraft, loadDraft, newDraft, saveDraft, type OnboardDraft, type WizardStep } from '@/lib/onboardDraft';
+import {
+  chainFieldsDiffer,
+  clearDraft,
+  draftKey,
+  keepChainFields,
+  loadDraft,
+  newDraft,
+  saveDraft,
+  type OnboardDraft,
+  type WizardStep,
+} from '@/lib/onboardDraft';
 import { hasChainState, useOnboardProgress, type OnboardProgress } from '@/lib/useOnboardProgress';
 import { InlineError } from '../InlineError';
 import { DetailsStep } from './DetailsStep';
@@ -30,13 +40,17 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
   // Transaction callbacks can arrive back to back, so each patch builds on the last one, not on a render.
   const current = useRef(draft);
   const [saved, setSaved] = useState(true);
+  // After a failed save, storage is behind this tab rather than ahead of it.
+  const storageCurrent = useRef(true);
 
   const patch = useCallback<PatchDraft>(
     (changes) => {
-      const next = { ...current.current, ...changes };
+      const stored = storageCurrent.current ? loadDraft(creator) : null;
+      const next = keepChainFields({ ...current.current, ...changes }, stored, changes);
       current.current = next;
       setDraft(next);
-      setSaved(saveDraft(creator, next));
+      storageCurrent.current = saveDraft(creator, next);
+      setSaved(storageCurrent.current);
     },
     [creator],
   );
@@ -49,6 +63,9 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
   const [problem, setProblem] = useState<Extract<OnboardProgress, { state: 'missing' | 'not-yours' }> | null>(null);
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [done, setDone] = useState<{ agentId: string; serial: number | null } | null>(null);
+  const [signing, setSigning] = useState(false);
+  // Bumped to remount the current step, whose transaction buttons read what to resume only on mount.
+  const [resync, setResync] = useState(0);
 
   const finish = useCallback(
     (agentId: string, serial: number | null) => {
@@ -75,6 +92,7 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
         if (current.current.step === 5) patch({ step: 4 });
         break;
       case 'register-pending':
+      case 'register-unknown':
         patch({ step: 4 });
         break;
       case 'register-failed':
@@ -91,6 +109,27 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
         setProblem(result);
     }
   }, [result, patch, finish]);
+
+  // Another tab changed this wallet's draft. Only a tab with a wallet prompt open holds its ground, as
+  // remounting would drop the hash on its way back. Its next save still keeps the other tab's work.
+  useEffect(() => {
+    if (done || signing) return;
+    function onStorage(event: StorageEvent) {
+      if (event.key !== null && event.key !== draftKey(creator)) return;
+      const before = current.current;
+      const stored = loadDraft(creator);
+      const next = stored ? { ...stored, step: before.step } : newDraft();
+      current.current = next;
+      setDraft(next);
+      if (!chainFieldsDiffer(before, next)) return;
+      setRegisterError(null);
+      setResync((n) => n + 1);
+      if (hasChainState(next)) recheck();
+      else setProblem(null);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [creator, done, signing, recheck]);
 
   // Signing with a separate agent wallet can move the wallet's selected account. Hold on to the creator
   // from then on, including on the success screen, or the wizard would reload as the agent wallet.
@@ -181,6 +220,7 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
       )}
       {step === 4 && (
         <ReviewStep
+          key={resync}
           creator={creator}
           draft={draft}
           patch={patch}
@@ -190,16 +230,19 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
             setRegisterError(null);
             patch({ ...REGISTERED, agentId, step: 5 });
           }}
+          onSigning={setSigning}
         />
       )}
       {step === 5 && draft.agentId !== undefined && (
         <LinkStep
+          key={resync}
           creator={creator}
           agentId={draft.agentId}
           draft={draft}
           patch={patch}
           onLinked={finish}
           onRecheck={recheck}
+          onSigning={setSigning}
         />
       )}
 
@@ -207,7 +250,7 @@ export function OnboardWizard({ creator, onPinCreator }: Props) {
         <p className="muted">
           {saved ? 'Progress saved — you can come back later' : 'This browser is blocking storage, so progress won’t be saved.'}
         </p>
-        <StartOver draft={draft} onConfirm={startNew} />
+        <StartOver draft={draft} signing={signing} onConfirm={startNew} />
       </footer>
     </section>
   );

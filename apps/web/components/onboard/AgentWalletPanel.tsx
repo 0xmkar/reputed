@@ -5,12 +5,13 @@ import { useAccount, useSignTypedData, useWriteContract } from 'wagmi';
 import type { Address, EIP1193Provider, Hash, Hex } from 'viem';
 import { HEDERA_TESTNET, IDENTITY_REGISTRY, identityRegistryAbi } from '@reputed/shared';
 import { SIGNATURE_LIFETIME_SECONDS, SIGNATURE_SAFETY_SECONDS, agentWalletTypedData } from '@/lib/agentWallet';
+import { chainClient } from '@/lib/chainClient';
 import { GAS } from '@/lib/contracts';
 import { latestBlockTime } from '@/lib/mirror';
-import { describeWalletError } from '@/lib/walletError';
+import { describeWalletError, notSent } from '@/lib/walletError';
 import { AddressChip } from '../AddressChip';
 import { InlineError } from '../InlineError';
-import { TransactionButton } from '../TransactionButton';
+import { TransactionButton, type TxPhase } from '../TransactionButton';
 
 export const inWallet = (addresses: readonly Address[] | undefined, address: string) =>
   Boolean(addresses?.some((item) => item.toLowerCase() === address.toLowerCase()));
@@ -61,6 +62,9 @@ interface Props {
   onSubmitted: (hash: Hash) => void;
   onSet: () => void;
   onCleared: () => void;
+  onPhase: (phase: TxPhase) => void;
+  /** Why this has to be done again, when a sent transaction did not leave the wallet set. */
+  notice: string | null;
 }
 
 /**
@@ -68,7 +72,7 @@ interface Props {
  * the signature names the agent, its owner and a deadline at most 5 minutes out. So this happens after
  * register, and before linkAgent because linkAgent vouches for whichever wallet is set at that moment.
  */
-export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, creatorAvailable, onSubmitted, onSet, onCleared }: Props) {
+export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, creatorAvailable, onSubmitted, onSet, onCleared, onPhase, notice }: Props) {
   const { addresses, chainId } = useAccount();
   const { mutateAsync: signTypedData, isPending: signing } = useSignTypedData();
   const { mutateAsync: writeContract } = useWriteContract();
@@ -77,18 +81,21 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
 
   const available = inWallet(addresses, agentWallet);
   const onWrongNetwork = chainId !== HEDERA_TESTNET.id;
+  const shownError = error ?? notice;
 
   async function sign() {
     setError(null);
     try {
       // The deadline is checked against block time, so a wrong clock on this device mustn't decide it.
-      const now = (await latestBlockTime()) ?? BigInt(Math.floor(Date.now() / 1000));
+      // Its lifetime starts now, so time spent in the wallet comes out of it.
+      const startedMs = Date.now();
+      const now = (await latestBlockTime()) ?? BigInt(Math.floor(startedMs / 1000));
       const deadline = now + BigInt(SIGNATURE_LIFETIME_SECONDS);
       const signature = await signTypedData({
         account: agentWallet,
         ...agentWalletTypedData({ agentId: BigInt(agentId), newWallet: agentWallet, owner: creator, deadline }),
       });
-      setSigned({ signature, deadline, usableUntilMs: Date.now() + (SIGNATURE_LIFETIME_SECONDS - SIGNATURE_SAFETY_SECONDS) * 1000 });
+      setSigned({ signature, deadline, usableUntilMs: startedMs + (SIGNATURE_LIFETIME_SECONDS - SIGNATURE_SAFETY_SECONDS) * 1000 });
     } catch (err) {
       const { rejected, message } = describeWalletError(err);
       setError(rejected ? 'Cancelled in your wallet' : message);
@@ -99,7 +106,7 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
     if (!signed || Date.now() > signed.usableUntilMs) {
       setSigned(null);
       setError('The signature expired. Sign again.');
-      throw new Error('The signature expired. Sign again.');
+      throw notSent('The signature expired. Sign again.');
     }
     return writeContract({
       address: IDENTITY_REGISTRY,
@@ -110,6 +117,16 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
       account: creator,
       chainId: HEDERA_TESTNET.id,
     });
+  }
+
+  async function findSent(): Promise<true | null> {
+    const set = await chainClient.readContract({
+      address: IDENTITY_REGISTRY,
+      abi: identityRegistryAbi,
+      functionName: 'getAgentWallet',
+      args: [BigInt(agentId)],
+    });
+    return set.toLowerCase() === agentWallet.toLowerCase() ? true : null;
   }
 
   if (signed || pendingTx) {
@@ -125,8 +142,10 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
           onSend={send}
           onSubmitted={onSubmitted}
           onConfirmed={onSet}
-          onFailed={({ hash, reason }) => {
-            if (!hash) return;
+          findSent={findSent}
+          onFound={onSet}
+          onPhase={onPhase}
+          onFailed={({ reason }) => {
             // A revert spends the signature's usefulness: reasons include expiry and a wrong signer.
             setSigned(null);
             setError(reason);
@@ -141,7 +160,7 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
     return (
       <>
         <ShareWallet address={agentWallet} action="sign with your agent wallet" />
-        {error && <InlineError message={error} />}
+        {shownError && <InlineError message={shownError} />}
       </>
     );
   }
@@ -156,7 +175,7 @@ export function AgentWalletPanel({ agentId, creator, agentWallet, pendingTx, cre
           {signing ? 'Waiting for signature…' : 'Sign with agent wallet'}
         </button>
       </div>
-      {error && <InlineError message={error} />}
+      {shownError && <InlineError message={shownError} />}
     </div>
   );
 }

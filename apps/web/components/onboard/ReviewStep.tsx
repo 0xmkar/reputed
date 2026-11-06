@@ -7,18 +7,19 @@ import { HEDERA_TESTNET, IDENTITY_REGISTRY, type AgentFileResponse } from '@repu
 import { agentIdFromLogs } from '@/lib/agentLogs';
 import { MAX_AGENT_URI_BYTES, agentUriBytes, buildAgentFile } from '@/lib/agentFile';
 import { apiPost } from '@/lib/api';
-import type { ConfirmedTx, TxFailure } from '@/lib/confirmTx';
+import type { ConfirmedTx } from '@/lib/confirmTx';
 import { LINK_GAS_ESTIMATE, gasCostUsd, hbarForGasLimit, registerGas, registerGasEstimate, registerWithUriAbi } from '@/lib/contracts';
 import { findRegistration } from '@/lib/mirror';
-import type { OnboardDraft } from '@/lib/onboardDraft';
+import { loadDraft, type OnboardDraft } from '@/lib/onboardDraft';
+import { withSendLock } from '@/lib/sendLock';
+import { NotSentError, notSent } from '@/lib/walletError';
 import { CostHint } from '../CostHint';
 import { InlineError } from '../InlineError';
-import { TransactionButton } from '../TransactionButton';
+import { TransactionButton, type TxPhase } from '../TransactionButton';
 import { AddressChip } from '../AddressChip';
 import type { PatchDraft } from './OnboardWizard';
 
-const RECONCILE_ATTEMPTS = 3;
-const RECONCILE_GAP_MS = 4_000;
+const OTHER_TAB = 'This agent is already being registered in another tab.';
 
 interface Props {
   creator: Address;
@@ -27,29 +28,38 @@ interface Props {
   error: string | null;
   onBack: () => void;
   onRegistered: (agentId: string) => void;
+  onSigning: (signing: boolean) => void;
 }
 
-export function ReviewStep({ creator, draft, patch, error, onBack, onRegistered }: Props) {
+export function ReviewStep({ creator, draft, patch, error, onBack, onRegistered, onSigning }: Props) {
   const { mutateAsync: writeContract } = useWriteContract();
   const file = useMemo(() => buildAgentFile(draft.fields), [draft.fields]);
   const uriBytes = agentUriBytes(file);
   const tooLarge = uriBytes > MAX_AGENT_URI_BYTES;
 
-  const [reconciling, setReconciling] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [phase, setPhase] = useState<TxPhase>('idle');
   const [notice, setNotice] = useState<string | null>(null);
-  const attempt = useRef<{ uri: string; startedAt: number } | null>(null);
+  // Set once this send reaches the wallet. Stopping sooner leaves any earlier attempt's record alone.
+  const walletAsked = useRef(false);
 
-  async function send(): Promise<Hash> {
+  /** Only one tab at a time gets past here, and it re-reads storage so it can't overtake another tab's attempt. */
+  function send(): Promise<Hash> {
     setNotice(null);
-    setSending(true);
-    attempt.current = null;
-    try {
-      const { uri } = await apiPost<AgentFileResponse>('/api/agent-file', file);
-      const startedAt = Date.now();
-      attempt.current = { uri, startedAt };
-      patch({ pendingUri: uri, registerStartedAt: startedAt });
-      return await writeContract({
+    walletAsked.current = false;
+    return withSendLock(`reputed:register:${creator.toLowerCase()}`, OTHER_TAB, async () => {
+      const stored = loadDraft(creator);
+      if (stored && (stored.registerTx || stored.agentId !== undefined || stored.registerStartedAt !== draft.registerStartedAt)) {
+        throw notSent(OTHER_TAB);
+      }
+      const uri = await apiPost<AgentFileResponse>('/api/agent-file', file).then(
+        (response) => response.uri,
+        (err: unknown) => {
+          throw new NotSentError(err);
+        },
+      );
+      patch({ pendingUri: uri, registerStartedAt: Date.now() });
+      walletAsked.current = true;
+      return writeContract({
         address: IDENTITY_REGISTRY,
         abi: registerWithUriAbi,
         functionName: 'register',
@@ -58,10 +68,7 @@ export function ReviewStep({ creator, draft, patch, error, onBack, onRegistered 
         account: creator,
         chainId: HEDERA_TESTNET.id,
       });
-    } catch (err) {
-      setSending(false);
-      throw err;
-    }
+    });
   }
 
   function confirmed({ hash, logs }: ConfirmedTx) {
@@ -73,31 +80,14 @@ export function ReviewStep({ creator, draft, patch, error, onBack, onRegistered 
     onRegistered(agentId);
   }
 
-  /**
-   * A wallet can report an error after the relay accepted the transaction, and then no hash ever
-   * reaches us. Sending again would register a second agent, so look on-chain before allowing Retry.
-   */
-  async function failed({ hash }: TxFailure) {
-    setSending(false);
-    if (hash) {
-      patch({ registerTx: undefined, registerStartedAt: undefined, pendingUri: undefined });
-      return;
-    }
-    const sent = attempt.current;
-    if (!sent) return;
-    setReconciling(true);
-    for (let i = 0; i < RECONCILE_ATTEMPTS; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, RECONCILE_GAP_MS));
-      const agentId = await findRegistration(creator, sent.uri, sent.startedAt).catch(() => null);
-      if (agentId !== null) {
-        onRegistered(agentId);
-        return;
-      }
-    }
-    setReconciling(false);
+  /** A second send mints a second agent, so a lost hash is searched for by the URI and the time it was sent. */
+  function findSent(signal: AbortSignal): Promise<string | null> {
+    const { pendingUri, registerStartedAt } = draft;
+    if (!pendingUri || registerStartedAt === undefined) return Promise.resolve(null);
+    return findRegistration(creator, pendingUri, registerStartedAt, signal);
   }
 
-  const inFlight = sending || Boolean(draft.registerTx);
+  const inFlight = phase === 'signing' || phase === 'confirming' || phase === 'unknown' || Boolean(draft.registerTx);
 
   return (
     <div className="card onboard-card">
@@ -158,16 +148,26 @@ export function ReviewStep({ creator, draft, patch, error, onBack, onRegistered 
       <TransactionButton
         label="Register agent"
         resumeHash={draft.registerTx}
-        disabled={tooLarge || reconciling}
+        resumeStartedAt={draft.pendingUri ? draft.registerStartedAt : undefined}
+        disabled={tooLarge}
+        resendRisk="Registering again could mint a second agent and charge you twice."
         onSend={send}
         onSubmitted={(hash) => patch({ registerTx: hash })}
         onConfirmed={confirmed}
-        onFailed={failed}
+        onFailed={() => patch({ registerTx: undefined, registerStartedAt: undefined, pendingUri: undefined })}
+        onNotSent={() => {
+          if (walletAsked.current) patch({ registerStartedAt: undefined, pendingUri: undefined });
+        }}
+        findSent={findSent}
+        onFound={onRegistered}
+        onPhase={(next) => {
+          setPhase(next);
+          onSigning(next === 'signing');
+        }}
       />
-      {reconciling && <p className="onboard-text muted">Checking whether your registration went through…</p>}
 
       <div className="onboard-nav">
-        <button type="button" className="btn btn-outline" disabled={inFlight || reconciling} onClick={onBack}>
+        <button type="button" className="btn btn-outline" disabled={inFlight} onClick={onBack}>
           Back
         </button>
       </div>

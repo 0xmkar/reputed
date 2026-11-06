@@ -1,8 +1,8 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useSendTransaction } from 'wagmi';
-import { parseEther, type Hash } from 'viem';
+import { formatEther, parseEther } from 'viem';
 import { HEDERA_TESTNET, hashscan, type AgentDetail, type Address } from '@reputed/shared';
 import { formatDateTime } from '@/lib/format';
 import { AddressChip } from '../AddressChip';
@@ -10,13 +10,15 @@ import { CostHint } from '../CostHint';
 import { EmptyState } from '../EmptyState';
 import { CheckIcon } from '../icons';
 import { InlineError } from '../InlineError';
-import { TransactionButton } from '../TransactionButton';
-import { consensusToMs, toSdkTransactionId } from './mirror';
+import { TransactionButton, type TxPhase } from '../TransactionButton';
+import { clearPaymentAttempt, loadPaymentAttempt, savePaymentAttempt, type PaymentAttempt } from './attempts';
+import { MirrorUnavailableError, consensusToMs, findSentPayment, toSdkTransactionId, type PaymentParties, type VerifiedPayment } from './mirror';
 import type { PaymentCheck, PaymentState } from './usePaymentCheck';
 
 /** A plain transfer uses 21,000 gas on testnet. The limit leaves room for a contract wallet. */
 const PAYMENT_GAS = 100_000n;
 const AMOUNT = /^(\d+\.?\d{0,8}|\.\d{1,8})$/;
+const WEIBARS_PER_TINYBAR = 10n ** 10n;
 
 /** Hedera's EVM value is in tinybars scaled up by 10^10, so 8 decimals is the finest amount it can carry. */
 function toWeibars(amount: string): bigint | null {
@@ -32,40 +34,65 @@ function hbarText(amount: number): string {
 
 interface SendProps {
   agent: AgentDetail;
+  client: Address;
   wallet: Address;
+  parties: PaymentParties | null;
+  usedIds: ReadonlySet<string>;
   expanded: boolean;
   onSending: (sending: boolean) => void;
-  onPaid: (hash: Hash) => void;
+  /** Gets the proof to cite: the hash, or the transaction ID when a lost send was found on Hedera. */
+  onPaid: (proof: string) => void;
 }
 
-function SendPayment({ agent, wallet, expanded, onSending, onPaid }: SendProps) {
+function SendPayment({ agent, client, wallet, parties, usedIds, expanded, onSending, onPaid }: SendProps) {
   const id = useId();
   const price = agent.endpoints.x402PriceHbar;
-  const [amount, setAmount] = useState(price === undefined ? '' : hbarText(price));
-  const [tx, setTx] = useState<'idle' | 'confirming' | 'confirmed'>('idle');
+  // Read once: a reload lands here with the payment still on its way, or with its outcome unknown.
+  const [resumed] = useState(() => loadPaymentAttempt(client, agent.agentId));
+  const attempt = useRef<PaymentAttempt | null>(resumed);
+  const [amount, setAmount] = useState(() => {
+    if (resumed) return formatEther(BigInt(resumed.weibars));
+    return price === undefined ? '' : hbarText(price);
+  });
+  const [phase, setPhase] = useState<TxPhase>('idle');
   const { sendTransactionAsync } = useSendTransaction();
   const value = toWeibars(amount);
   const entered = amount.trim() !== '';
+  const editable = phase === 'idle' || phase === 'not-found';
 
-  const track = (next: typeof tx) => {
-    setTx(next);
-    onSending(next === 'confirming');
+  const forget = () => {
+    attempt.current = null;
+    clearPaymentAttempt(client, agent.agentId);
   };
 
+  function send() {
+    attempt.current = { startedAt: Date.now(), weibars: value!.toString() };
+    savePaymentAttempt(client, agent.agentId, attempt.current);
+    return sendTransactionAsync({ account: client, to: wallet, value: value!, gas: PAYMENT_GAS, chainId: HEDERA_TESTNET.id });
+  }
+
+  /** Throws until both accounts are known, because that says nothing about the payment. */
+  function findSent(signal: AbortSignal): Promise<VerifiedPayment | null> {
+    const sent = attempt.current;
+    if (!sent) return Promise.resolve(null);
+    if (!parties) return Promise.reject(new MirrorUnavailableError());
+    return findSentPayment(parties, BigInt(sent.weibars) / WEIBARS_PER_TINYBAR, sent.startedAt, usedIds, signal);
+  }
+
   return (
-    <details className={`pay-send${tx === 'confirmed' ? ' tx-finished' : ''}`} open={expanded || tx !== 'idle' || undefined}>
+    <details className={`pay-send${phase === 'done' ? ' tx-finished' : ''}`} open={expanded || phase !== 'idle' || undefined}>
       <summary>Pay this agent now</summary>
       <div className="row muted">
         To <AddressChip address={wallet} />
       </div>
-      <div className="field" hidden={tx === 'confirmed'}>
+      <div className="field" hidden={phase === 'done'}>
         <label htmlFor={id}>Amount (HBAR)</label>
         <input
           id={id}
           className="input"
           inputMode="decimal"
           autoComplete="off"
-          disabled={tx !== 'idle'}
+          disabled={!editable}
           value={amount}
           aria-invalid={entered && value === null}
           onChange={(e) => setAmount(e.target.value)}
@@ -75,15 +102,32 @@ function SendPayment({ agent, wallet, expanded, onSending, onPaid }: SendProps) 
       <TransactionButton
         label="Send payment"
         disabled={value === null}
-        onSend={() => sendTransactionAsync({ to: wallet, value: value!, gas: PAYMENT_GAS, chainId: HEDERA_TESTNET.id })}
-        onSubmitted={() => track('confirming')}
-        onFailed={() => track('idle')}
+        resendRisk="Sending again could pay this agent twice."
+        resumeHash={resumed?.hash}
+        resumeStartedAt={resumed && !resumed.hash ? resumed.startedAt : undefined}
+        onSend={send}
+        onSubmitted={(hash) => {
+          if (!attempt.current) return;
+          attempt.current = { ...attempt.current, hash };
+          savePaymentAttempt(client, agent.agentId, attempt.current);
+        }}
+        onFailed={forget}
+        onNotSent={forget}
         onConfirmed={({ hash }) => {
-          track('confirmed');
+          forget();
           onPaid(hash);
         }}
+        findSent={findSent}
+        onFound={(payment) => {
+          forget();
+          onPaid(payment.txId);
+        }}
+        onPhase={(next) => {
+          setPhase(next);
+          onSending(next === 'signing' || next === 'confirming' || next === 'unknown');
+        }}
       />
-      {tx === 'idle' && <CostHint usd={0.01} />}
+      {phase === 'idle' && <CostHint usd={0.01} />}
     </details>
   );
 }
@@ -151,16 +195,17 @@ function PaymentStatus({ state, onRetry, onClear }: { state: PaymentState; onRet
 
 interface Props {
   agent: AgentDetail;
+  client: Address;
   check: PaymentCheck;
   selected: string;
   pasted: string;
   onSelect: (txId: string) => void;
   onPaste: (text: string) => void;
   onSending: (sending: boolean) => void;
-  onPaid: (hash: Hash) => void;
+  onPaid: (proof: string) => void;
 }
 
-export function PaymentField({ agent, check, selected, pasted, onSelect, onPaste, onSending, onPaid }: Props) {
+export function PaymentField({ agent, client, check, selected, pasted, onSelect, onPaste, onSending, onPaid }: Props) {
   const id = useId();
   const { state, recent, usedIds } = check;
   const clear = () => {
@@ -231,11 +276,14 @@ export function PaymentField({ agent, check, selected, pasted, onSelect, onPaste
       {agent.wallet && (
         <SendPayment
           agent={agent}
+          client={client}
           wallet={agent.wallet}
+          parties={check.parties}
+          usedIds={usedIds}
           expanded={check.parties !== null && !recent.isLoading && !recent.isError && recent.payments.length === 0}
           onSending={onSending}
-          onPaid={(hash) => {
-            onPaid(hash);
+          onPaid={(proof) => {
+            onPaid(proof);
             recent.refetch();
           }}
         />

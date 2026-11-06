@@ -10,6 +10,9 @@ export const POLL_INTERVAL_MS = 2_000;
 export const SLOW_AFTER_MS = 30_000;
 /** Polling then stops until the user presses Refresh. The outcome stays unknown, not failed. */
 export const STOP_POLLING_AFTER_MS = 180_000;
+/** How long a send that returned no hash stays locked while Hedera is searched for it. */
+export const RECONCILE_WINDOW_MS = 180_000;
+const RECONCILE_GAP_MS = 4_000;
 
 export interface TxLog {
   address: Address;
@@ -20,6 +23,8 @@ export interface TxLog {
 export interface ConfirmedTx {
   hash: Hash;
   logs: TxLog[];
+  /** What the call returned, or `0x` if nothing. A token call can return a failure code here without reverting. */
+  callResult: Hex;
 }
 
 export interface TxFailure {
@@ -135,6 +140,7 @@ interface MirrorContractResult {
   result?: string | null;
   status?: string | null;
   error_message?: string | null;
+  call_result?: string | null;
   logs?: { address: Address; topics: Hex[]; data: Hex | null }[] | null;
 }
 
@@ -154,10 +160,26 @@ export async function fetchTxOutcome(hash: Hash, signal?: AbortSignal): Promise<
 
   if (body.result === 'SUCCESS' || body.status === '0x1') {
     const logs = (body.logs ?? []).map(({ address, topics, data }) => ({ address, topics, data: data ?? '0x' }));
-    return { status: 'confirmed', hash, logs };
+    const callResult = isHex(body.call_result) ? body.call_result : '0x';
+    return { status: 'confirmed', hash, logs, callResult };
   }
   if (!body.result && !body.status) return unknown;
   return { status: 'reverted', hash, ...describeRevert(body.result, body.error_message) };
+}
+
+const SUCCESS_CODE = 22;
+const ALREADY_ASSOCIATED_CODE = 194;
+const WORD_LENGTH = 66;
+
+/**
+ * HIP-719's associate() returns a Hedera response code as data and does not revert, so a transaction
+ * that succeeded can still have failed to associate. Null means the wallet holds the association.
+ */
+export function associateFailure(callResult: Hex): Omit<TxFailure, 'hash'> | null {
+  if (callResult.length !== WORD_LENGTH) return { reason: 'Hedera did not say whether the token was associated.' };
+  const responseCode = Number(BigInt(callResult));
+  if (responseCode === SUCCESS_CODE || responseCode === ALREADY_ASSOCIATED_CODE) return null;
+  return { reason: responseCodeText(responseCode), responseCode };
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -186,6 +208,38 @@ export async function confirmTx(
   for (;;) {
     const outcome = await fetchTxOutcome(hash, signal);
     if (outcome.status !== 'unknown' || Date.now() >= stopAt) return outcome;
+    await sleep(intervalMs, signal);
+  }
+}
+
+export type SendLookup<T> =
+  | { status: 'found'; value: T }
+  /** A clean look that found nothing. It may still appear. */
+  | { status: 'absent' }
+  /** The last look failed, which says nothing either way. */
+  | { status: 'unavailable' };
+
+/**
+ * Searches for a send that returned no hash, at least once and then until `until`. `find` gives null
+ * for nothing there, and throws when it could not look. Rejects only when `signal` aborts.
+ */
+export async function lookForSend<T>(
+  find: (signal: AbortSignal) => Promise<T | null>,
+  until: number,
+  signal: AbortSignal,
+  intervalMs = RECONCILE_GAP_MS,
+): Promise<SendLookup<T>> {
+  for (;;) {
+    let last: SendLookup<T>;
+    try {
+      const value = await find(signal);
+      if (value !== null) return { status: 'found', value };
+      last = { status: 'absent' };
+    } catch (err) {
+      if (signal.aborted) throw err;
+      last = { status: 'unavailable' };
+    }
+    if (Date.now() >= until) return last;
     await sleep(intervalMs, signal);
   }
 }

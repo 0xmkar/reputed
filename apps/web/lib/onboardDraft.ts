@@ -32,7 +32,22 @@ export const newDraft = (): OnboardDraft => ({
   agentWallet: '',
 });
 
-const keyFor = (wallet: Address) => `reputed:onboard:v1:${wallet.toLowerCase()}`;
+/** Everything in a draft that points at the chain. An unlinked agent has no other record, as no API lists agents by owner. */
+const CHAIN_FIELDS = ['agentId', 'registerStartedAt', 'pendingUri', 'registerTx', 'walletTx', 'associateTx', 'linkTx'] as const;
+
+export const draftKey = (wallet: Address) => `reputed:onboard:v1:${wallet.toLowerCase()}`;
+
+/**
+ * What a tab may save, given what another tab may have stored since this one last read. A chain field
+ * only changes when `changes` names it: a tab holding an old copy must never erase an agent by saving.
+ */
+export function keepChainFields(next: OnboardDraft, stored: OnboardDraft | null, changes: Partial<OnboardDraft>): OnboardDraft {
+  if (!stored) return next;
+  const kept = CHAIN_FIELDS.filter((field) => !(field in changes)).map((field) => [field, stored[field]]);
+  return { ...next, ...(Object.fromEntries(kept) as Partial<OnboardDraft>) };
+}
+
+export const chainFieldsDiffer = (a: OnboardDraft, b: OnboardDraft): boolean => CHAIN_FIELDS.some((field) => a[field] !== b[field]);
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '');
 const hash = (value: unknown) => (typeof value === 'string' && isHash(value) ? value : undefined);
@@ -85,7 +100,7 @@ function readDraft(raw: unknown): OnboardDraft | null {
 
 export function loadDraft(wallet: Address): OnboardDraft | null {
   try {
-    const stored = localStorage.getItem(keyFor(wallet));
+    const stored = localStorage.getItem(draftKey(wallet));
     return stored === null ? null : readDraft(JSON.parse(stored));
   } catch {
     return null;
@@ -95,7 +110,7 @@ export function loadDraft(wallet: Address): OnboardDraft | null {
 /** False when the browser refused, so the page can stop promising that progress is saved. */
 export function saveDraft(wallet: Address, draft: OnboardDraft): boolean {
   try {
-    localStorage.setItem(keyFor(wallet), JSON.stringify(draft));
+    localStorage.setItem(draftKey(wallet), JSON.stringify(draft));
     return true;
   } catch {
     return false;
@@ -104,7 +119,7 @@ export function saveDraft(wallet: Address, draft: OnboardDraft): boolean {
 
 export function clearDraft(wallet: Address): void {
   try {
-    localStorage.removeItem(keyFor(wallet));
+    localStorage.removeItem(draftKey(wallet));
   } catch {
     // Nothing to do: the draft stays, and its next check against the chain reports it as linked.
   }

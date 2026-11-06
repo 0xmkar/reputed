@@ -4,3 +4,7 @@ export * from './messages';
 export { identityRegistryAbi } from './abi/identityRegistry';
 export { reputationRegistryAbi } from './abi/reputationRegistry';
 export { creatorRegistryAbi } from './abi/creatorRegistry';
+export * from './agentFile';
+export * from './gas';
+export * from './grant';
+export * from './logs';

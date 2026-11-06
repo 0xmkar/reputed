@@ -335,3 +335,37 @@ contract LinkWithGrantTest is Base {
         registry.syncAgentWallet(agentId);
     }
 }
+
+/// The same inputs as packages/shared/test/grant.test.ts. If either side changes how LinkGrant is
+/// encoded, one of the two tests stops matching its constant and fails.
+contract LinkGrantVectorTest is Base {
+    bytes32 internal constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    address internal constant REGISTRY = 0x1111111111111111111111111111111111111111;
+    address internal constant OWNER = 0x2222222222222222222222222222222222222222;
+    address internal constant GRANT_KEY = 0xfF5eA34E2eABc2EDC7D271aD969024cF5A7bEe1B;
+    bytes32 internal constant DIGEST = 0x0d68a322e28c4d2ce2d2f40f3db915f14ec553846d5817dc880f43d8dff3b3e0;
+    bytes internal constant SIGNATURE =
+        hex"9f62d720559fbe52333d63c710ebed028756d8d480d53556c97daa15ae33273d3e1a1589cded42ea2a8ff98de1abaa1b0c066b8108c6c80a69b041a81a60426b1b";
+
+    function test_typedDataDigestMatchesTheTypeScriptHelper() public view {
+        bytes32 domain = keccak256(
+            abi.encode(DOMAIN_TYPEHASH, keccak256("ReputedCreatorRegistry"), keccak256("2"), uint256(296), REGISTRY)
+        );
+        bytes32 structHash = keccak256(abi.encode(registry.LINK_GRANT_TYPEHASH(), uint256(7), OWNER, uint256(1800000000)));
+        assertEq(keccak256(abi.encodePacked("\x19\x01", domain, structHash)), DIGEST);
+    }
+
+    function test_theTypeScriptSignatureRecoversToTheGrantAddress() public pure {
+        bytes memory sig = SIGNATURE;
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
+        }
+        assertEq(ecrecover(DIGEST, v, r, s), GRANT_KEY);
+    }
+}

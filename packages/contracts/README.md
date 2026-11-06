@@ -88,6 +88,10 @@ WALLET_U_KEY=
 | `issueCredential`, holder auto-associated | about 1,050,000 | 1,500,000 |
 | `linkAgent`, wallet already associated | about 468,000 | 1,500,000 |
 | `linkAgent`, wallet auto-associated | about 1,170,000, worked out from the row above and the `issueCredential` gap | 1,500,000 |
+| `linkAgentWithGrant`, wallet auto-associated | 1,245,313 (testnet) | 1,500,000 |
+| `linkAgentWithGrant`, wallet already associated | 523,512 (testnet) | 1,500,000 |
+| `authorizeGrant` | 51,667 (testnet) | 300,000 |
+| `revokeGrant` | not measured | 200,000 |
 | `syncAgentWallet`, wallet already associated | about 400,000 | 1,500,000 |
 | `syncAgentWallet`, wallet auto-associated | about 1,100,000, worked out the same way | 1,500,000 |
 | `revokeCredential` | about 56,000 | 300,000 |
@@ -256,3 +260,19 @@ Deployed 2026-11-06. Source verified on Sourcify with an exact creation and runt
 Real gas: deploy 1,988,234. `issueCredential` to an already associated wallet 369,368. `revokeCredential` 83,081. `registerCreator` 71,089.
 
 Phase 3 passed on testnet with `apps/server/scripts/testnet-phase3.ts`, using two test-only creators registered directly with the verifier key, not through World ID. T3.1–T3.5 and T3.7–T3.9 passed, and T3.6 was not run. Agents 159, 160 and 162 belong to the first test creator, and 163 to the second. Real gas: `register` 454,322, `linkAgent` 1,208,089 with auto-association and 503,376 without.
+
+### Testnet deployment of v2 (grants)
+
+Deployed 2026-11-07 as a new contract, because grants add functions and a new credential collection (the old collection's keys belong to the old contract).
+
+| Item | Value |
+| --- | --- |
+| CreatorRegistry v2 | `0xcbd506592be9f52ae48196d592df8919c9fa4dd2` (0.0.11344727) |
+| Credential token | 0.0.11344804 |
+| CreatorRegistry v1 | `0x424afbefd2d91cd771785909bfc9aeb66e89a80a`, no longer used |
+
+Creating the collection takes **17.5 HBAR** as the value of `initCredentialToken`: a `cast call` simulation accepted 17.5 and refused 17.4, so the fee is about 17.45 HBAR. `deploy.sh` defaults to 20; use `INIT_HBAR=17.5`. Deploying the contract used 3.45 HBAR.
+
+`script/migrate-creators.sh` replayed the 5 creators of v1 into v2 with the verifier role, so nobody redoes World ID. Agents linked on v1 are not carried over: link them again.
+
+`packages/agent-kit/scripts/testnet-e2e.ts` ran the whole flow on testnet and passed: a creator authorized an API key, a funded agent account registered and linked itself in 11 seconds for 2.11 HBAR (agent 168, credential serial 3), a second run sent nothing, the server showed the agent human-backed and active, and after `revokeGrant` a new agent was refused with `GRANT_REVOKED` before anything was registered. `linkedOwner` equals the account's Mirror Node `evm_address`, so an ECDSA account owns its agent NFT under its alias address. Real gas: `register` 454,226, `linkAgentWithGrant` 1,245,313 with auto-association and 523,512 without.

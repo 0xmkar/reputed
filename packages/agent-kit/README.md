@@ -22,7 +22,7 @@ A full agent is in [`examples/agent-kit-langchain`](../../examples/agent-kit-lan
 ## What you need
 
 - A Hedera `Client` with an operator. That account **is** the agent: it owns the agent NFT and receives the credential. Give each agent its own account.
-- About 6 HBAR on that account for the first run (register ≈ 1.9 HBAR, link ≈ 1.9 HBAR, a token association if needed; Hedera charges gas used, but the balance has to cover the limit). `INSUFFICIENT_HBAR` says how much is missing.
+- About 3 HBAR on that account for the first run. Measured on testnet: registering costs about 0.56 HBAR and linking about 1.55 HBAR, and a new account receives the credential without a separate association step. Hedera charges gas used, but each transaction needs about 1.9 HBAR available when it is sent. `INSUFFICIENT_HBAR` says how much is missing.
 - An API key. A verified creator makes one on the dashboard (`/dashboard`) and authorizes it with one wallet transaction.
 - `REPUTED_API_URL` (or the `apiUrl` option): where the Reputed server runs.
 

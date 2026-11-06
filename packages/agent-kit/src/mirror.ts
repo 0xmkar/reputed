@@ -1,4 +1,4 @@
-import { pad, type Address, type Hex } from 'viem';
+import type { Address, Hex } from 'viem';
 import { REGISTERED, type TxLog } from '@reputed/shared';
 import { ReputedAgentError } from './errors';
 
@@ -36,6 +36,11 @@ export interface MirrorOptions {
   /** How many times to try again on HTTP 429 and 5xx. Defaults to 4. */
   retries?: number;
 }
+
+/** register(string agentURI), the Identity Registry call that mints an agent. */
+const REGISTER_URI_SELECTOR = '0xf2c298be';
+/** Each lookup is one request to a rate-limited public node, so only the newest registrations are read. */
+const MAX_REGISTRATION_LOOKUPS = 20;
 
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -105,13 +110,26 @@ export class MirrorClient {
     return this.#get<ContractResult>(`/contracts/results/${transactionId}`);
   }
 
-  /** Registered logs of the Identity Registry for agents this owner minted, newest first. */
+  /**
+   * Registered logs of agents this account registered, newest first. The Mirror Node refuses topic
+   * searches without a timestamp range, so this reads the account's own contract calls instead.
+   */
   async registeredBy(identityRegistry: Address, owner: Address): Promise<RegisteredLog[]> {
-    const query = new URLSearchParams({ topic0: REGISTERED, topic2: pad(owner.toLowerCase() as Hex), order: 'desc', limit: '50' });
-    const body = await this.#get<{ logs: { address: string; topics: string[]; data: string | null; transaction_hash?: string }[] }>(
-      `/contracts/${identityRegistry}/results/logs?${query}`,
+    const list = await this.#get<{ results: { to: string | null; hash: string; result: string; function_parameters: string }[] }>(
+      `/contracts/results?from=${owner}&order=desc&limit=100`,
     );
-    return (body?.logs ?? []).map((log) => ({ ...log, data: log.data ?? '0x' }));
+    const registry = identityRegistry.toLowerCase();
+    const calls = (list?.results ?? [])
+      .filter((call) => call.to?.toLowerCase() === registry && call.result === 'SUCCESS' && call.function_parameters.startsWith(REGISTER_URI_SELECTOR))
+      .slice(0, MAX_REGISTRATION_LOOKUPS);
+
+    const logs: RegisteredLog[] = [];
+    for (const call of calls) {
+      const detail = await this.getContractResult(call.hash);
+      const log = detail?.logs.find((item) => item.address.toLowerCase() === registry && item.topics[0] === REGISTERED);
+      if (log) logs.push({ ...log, data: log.data ?? '0x', transaction_hash: call.hash });
+    }
+    return logs;
   }
 
   /** True once the account holds (or has associated with) the token. */

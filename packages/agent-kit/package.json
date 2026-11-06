@@ -11,7 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "tsx --env-file=../../.env scripts/testnet-e2e.ts"
   },
   "dependencies": {
     "@reputed/sdk": "workspace:^",
@@ -28,6 +29,7 @@
     "@hiero-ledger/sdk": "^2.90.1",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "tsx": "^4.23.15"
   }
 }

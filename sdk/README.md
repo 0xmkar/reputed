@@ -72,4 +72,4 @@ REPUTED_API_URL=http://localhost:4000 node sdk/examples/check-agent.ts 7
 
 The package is TypeScript source with erasable syntax only, so Node 22.18 or newer runs it directly. It is `private` until a build step is added for publishing.
 
-Not built yet: `review()` (signs a transaction, owned by the contracts side) and `isHumanBacked()` (waiting for the CreatorRegistry ABI).
+Not built yet: `review()` (signs a transaction, owned by the contracts side; the web review modal in `web/components/review` shows the flow) and `isHumanBacked()` (the CreatorRegistry ABI is now in `shared/src/abi`, so this can be built).

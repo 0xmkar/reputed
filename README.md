@@ -12,6 +12,7 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 | [UI Elements](docs/04-ui-elements.md) | Screen map, global elements, 6 screens, shared components and states |
 | [Work Split](docs/05-work-split.md) | Who owns each phase, Swapnil's task list, and the rules for working in parallel |
 | [Testnet Runbook](docs/06-testnet-runbook.md) | The ordered steps from a funded operator to a live server, and which plan tests each step unlocks |
+| [Completion Plan](docs/07-completion-plan.md) | What is left, in order, with owners and exit tests |
 
 ## Stack
 
@@ -38,7 +39,7 @@ cp web/.env.example web/.env.local   # then set NEXT_PUBLIC_API_URL to your serv
 pnpm --filter @reputed/web dev       # http://localhost:3000
 ```
 
-Pages: `/` (home), `/explore`, `/agent/<id>` and `/creator/<address>`. The Verify and Onboard pages are built on the server side of the work split and are not there yet.
+Pages: `/` (home), `/explore`, `/agent/<id>`, `/creator/<address>`, `/verify` and `/onboard`. The signing flows (Verify, Onboard, the review modal and report-compromised) are built but have not been run in a browser against a real World ID app; see the [Completion Plan](docs/07-completion-plan.md).
 
 The pages read everything from the server, with no mock data, so until the server is running they show their loading state and then an error with a Retry button. Connecting a wallet needs a browser wallet such as MetaMask; the app asks it to switch to Hedera Testnet.
 

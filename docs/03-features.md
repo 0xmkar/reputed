@@ -4,7 +4,7 @@ Nov 6, 2026
 
 ## How to read this list
 
-There are 58 features in 8 groups; 30 are needed for the hackathon demo (MVP).
+There are 60 features in 8 groups; 30 are needed for the hackathon demo (MVP).
 
 - **ID:** group prefix plus a number, e.g. CR-2. Use it in tickets and test reports.
 - **Priority:** MVP = needed for the demo; Next = right after the demo; Later = before mainnet, or nice to have.
@@ -22,13 +22,13 @@ These features make one verified human equal exactly one creator. 4 of 7 are MVP
 | CR-2 | World ID verification | Orb-level proof from a server-signed request, with the creator's wallet as the signal so the proof only works for that wallet, plus a wallet signature proving the creator controls it | MVP | 2 |
 | CR-3 | One human, one creator | A nullifier can register one creator, and a wallet can hold one nullifier | MVP | 1–2 |
 | CR-4 | On-chain creator record | `CreatorRegistered` event and an `isHumanBacked(wallet)` view | MVP | 1 |
-| CR-5 | HashPack wallet | HashPack support through WalletConnect | Later | 6 |
+| CR-5 | HashPack wallet | Wallet picker that lists every extension wallet that announces itself (EIP-6963), plus WalletConnect when `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is set. HashPack connects as an EVM wallet on chain 296, so only ECDSA accounts work; a banner flags Ed25519 accounts and long-zero addresses | Later | 6 |
 | CR-6 | Creator wallet migration | Move a creator record to a new wallet with a fresh World ID proof | Later | 8 |
 | CR-7 | Unverified creator tier | Creators without World ID, allowed at a lower trust tier | Later | 5 |
 
 ## Agent onboarding
 
-These features take a verified creator from an idea to a registered, linked, human-backed agent. 7 of 10 are MVP.
+These features take a verified creator from an idea to a registered, linked, human-backed agent. 7 of 12 are MVP.
 
 | ID | Feature | What it does | Priority | Phase |
 | --- | --- | --- | --- | --- |
@@ -42,6 +42,8 @@ These features take a verified creator from an idea to a registered, linked, hum
 | AG-8 | Separate agent wallet | `setAgentWallet` with an EIP-712 signature from the agent's own account. After linking, `syncAgentWallet` backs the new wallet and issues it a credential | Next | 3 |
 | AG-9 | Edit agent file | Gets a new URI for the edited file and calls `setAgentURI` | Next | 6 |
 | AG-10 | HCS-14 UAID and HCS-11 profile | Makes the agent discoverable by HCS-10 tools | Later | 3 |
+| AG-11 | API keys | A verified creator makes a key in the browser on `/dashboard` and authorizes its address with `authorizeGrant` (expiry, most agents). Revoke any time. The Reputed server never sees the key | Next | 6 |
+| AG-12 | Headless onboarding (`@reputed/agent-kit`) | `Reputed.connect({ client, apiKey, agent })` registers a Hedera Agent Kit agent, links it with `linkAgentWithGrant`, receives its credential and returns a plugin with reputation tools. Resumable after a crash | Next | 7 |
 
 ## Reviews and reputation
 

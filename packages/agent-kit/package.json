@@ -1,0 +1,35 @@
+{
+  "name": "@reputed/agent-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wrap a Hedera Agent Kit agent to give it a Reputed identity: one API key, and the SDK registers, links and credentials the agent.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "tsx --env-file=../../.env scripts/testnet-e2e.ts"
+  },
+  "dependencies": {
+    "@reputed/sdk": "workspace:^",
+    "@reputed/shared": "workspace:^",
+    "viem": "^2.57.16",
+    "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "@hashgraph/hedera-agent-kit": "^4.2.0",
+    "@hiero-ledger/sdk": "^2.90.1"
+  },
+  "devDependencies": {
+    "@hashgraph/hedera-agent-kit": "^4.2.0",
+    "@hiero-ledger/sdk": "^2.90.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "tsx": "^4.23.15"
+  }
+}

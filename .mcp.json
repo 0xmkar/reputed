@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hedera-by-example": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://hbe.expo.app/api/mcp"]
+    }
+  }
+}

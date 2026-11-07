@@ -136,6 +136,7 @@ The implementation plan has not been updated for these:
 - **T3.6:** a wallet with free auto-association slots receives the credential, so the revert only applies to wallets with none.
 - **World ID 4.0:** the web flow is `POST /api/rp-signature`, then the wallet signs `walletBindingMessage`, then IDKit, then `POST /api/verify`. T2.7 now means a wrong `WORLD_RP_ID`.
 - **Signatures:** `POST /api/verify` and `POST /api/review-file` require a wallet signature. Build the signed bytes with `walletBindingMessage` and `serializeReviewFile` from `@reputed/shared`.
+- **Sessions:** the web app signs `sessionMessage` once per wallet, trades it at `POST /api/session` for a 7-day token and keeps it in `localStorage`, so a reload recognizes the wallet without another signature or World ID scan. `GET /api/session` checks a token. A token proves control of the wallet; it does not authorize transactions, which still need the connected wallet.
 - **Wallet rotation:** a wallet set after linking is backed only after the creator calls `syncAgentWallet`.
 
 ## Known gaps

@@ -1,5 +1,4 @@
 packages:
-  - shared
-  - server
-  - web
-  - sdk
+  - apps/*
+  - packages/*
+  - examples/*

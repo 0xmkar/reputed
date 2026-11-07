@@ -38,6 +38,7 @@ export interface TxFailure {
   responseCode?: number;
 }
 
+/** `unknown` means the Mirror Node has not answered yet. It is never treated as a failure. */
 export type TxOutcome =
   | ({ status: 'confirmed' } & ConfirmedTx)
   | ({ status: 'reverted'; hash: Hash } & TxFailure)
@@ -158,11 +159,13 @@ export async function fetchTxOutcome(hash: Hash, signal?: AbortSignal): Promise<
     return unknown;
   }
 
+  // Two spellings of success: `result` is Hedera's response code name, `status` the EVM receipt field.
   if (body.result === 'SUCCESS' || body.status === '0x1') {
     const logs = (body.logs ?? []).map(({ address, topics, data }) => ({ address, topics, data: data ?? '0x' }));
     const callResult = isHex(body.call_result) ? body.call_result : '0x';
     return { status: 'confirmed', hash, logs, callResult };
   }
+  // A 200 with neither field is a record that exists but has no verdict yet.
   if (!body.result && !body.status) return unknown;
   return { status: 'reverted', hash, ...describeRevert(body.result, body.error_message) };
 }

@@ -5,6 +5,7 @@ import type { AgentSummary, Tier } from '@reputed/shared';
 import { useAgents } from '@/lib/useAgents';
 import { useDebounced } from '@/lib/useDebounced';
 import { AgentGrid } from '@/components/AgentGrid';
+import { PageHead } from '@/components/PageHead';
 import { EmptyState } from '@/components/EmptyState';
 import { StaleScoresChip } from '@/components/StaleScoresChip';
 import { StatsStrip } from '@/components/StatsStrip';
@@ -51,11 +52,15 @@ export default function ExplorePage() {
 
   return (
     <section>
-      <h1>Explore agents</h1>
+      <PageHead
+        eyebrow="Explorer"
+        title="Find agents worth hiring"
+        lede="Every score here is earned from paid, human-backed reviews. Filter by tier, minimum score and payment support."
+      />
       {data?.scoresStale && <StaleScoresChip />}
       <StatsStrip stats={data?.stats} />
 
-      <div className="filters">
+      <div className="toolbar">
         <input
           type="search"
           className="input"
@@ -101,6 +106,15 @@ export default function ExplorePage() {
         </label>
       </div>
 
+      {agents && agents.length > 0 && (
+        <p className="results-head">
+          <span>
+            <b>{agents.length}</b> {agents.length === 1 ? 'agent' : 'agents'}
+            {humanBacked ? ', human-backed only' : ''}
+          </span>
+          <span>Sorted by {SORTS[sort].label.toLowerCase()}</span>
+        </p>
+      )}
       <AgentGrid
         agents={agents}
         isLoading={isLoading}

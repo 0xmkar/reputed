@@ -1,3 +1,6 @@
+// Turns ChainState plus cached facts into ScoringInputs: the pure data that computeScores and
+// computeInputsHash consume. The scope is every linked agent, plus whatever extras the live
+// view adds (tracked lookups, unlinked agents a creator minted). An epoch passes no extras.
 import { parseReviewFile } from '../scoring/filter.ts';
 import { compareConsensus, type ConsensusTimestamp } from '../scoring/time.ts';
 import { parsePaymentProof } from '../scoring/txid.ts';
@@ -156,6 +159,7 @@ export function buildInputs(
     }
     if (payment) {
       for (const wallet of walletsForPayment(feedback, payment, agentById.get(feedback.agentId)!)) {
+        // An account created after asOf did not exist for this view, whenever the cache saw it.
         const record = facts.account(wallet);
         if (record && compareConsensus(record.createdAt, asOf) <= 0) {
           accounts[wallet] = record.accountId;

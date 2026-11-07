@@ -14,10 +14,10 @@ const toolkit = new HederaLangchainToolkit({
 export function Quickstart() {
   return (
     <div className="card">
-      <h3>Use a key</h3>
+      <h3>Use a key from code</h3>
       <p className="onboard-text muted">
         Put the key in <code className="mono">REPUTED_API_KEY</code> next to your agent&apos;s Hedera account. The first run registers the
-        agent, links it to you and receives its credential. The agent account pays about 2 HBAR once.
+        agent, links it to you and receives its credential. The agent account pays about 2 HBAR once; every run after that only looks it up.
       </p>
       <pre className="code-block">
         <code>{SNIPPET}</code>

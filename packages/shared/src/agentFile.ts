@@ -1,5 +1,10 @@
 import type { AgentFileRequest } from './api';
 
+// The agent file is the ERC-8004 registration JSON. The dashboard form and the agent kit both build it
+// from AgentFields; the server (POST /api/agent-file) turns it into a base64 data: URI plus a keccak
+// hash, and that URI is what `register(string agentURI)` stores on-chain. Because the whole file lives
+// in contract storage, its size is capped and the validation here mirrors the server's.
+
 export const MAX_NAME = 50;
 export const MAX_DESCRIPTION = 280;
 export const MAX_TAGS = 8;
@@ -80,8 +85,12 @@ export function buildAgentFile(fields: AgentFields): AgentFileRequest {
   };
 }
 
-/** The length of the data URI the server will build for this file. */
+/**
+ * The length of the data URI the server will build for this file, computed client-side so the form can
+ * show the limit and the agent kit can size the gas before anything is posted.
+ */
 export function agentUriBytes(file: AgentFileRequest): number {
   const json = new TextEncoder().encode(JSON.stringify(file)).length;
+  // Padded base64: four characters for every three bytes, rounded up.
   return DATA_URI_PREFIX.length + Math.ceil(json / 3) * 4;
 }

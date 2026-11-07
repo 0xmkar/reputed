@@ -1,3 +1,8 @@
+// Enrichment: the Mirror Node reads an epoch needs beyond the logs. For each review in scope,
+// its HCS file, the payment it cites, and the Hedera account IDs behind the two wallets the
+// payment check compares; for each agent, its registration file. Every cached fact records the
+// consensus time its lookup covered (fetchedThrough), which is what lets inputs.ts decide what
+// a review could have seen as of its own time, whatever the cache knew when.
 import { parseReviewFile } from '../scoring/filter.ts';
 import { compareConsensus, type ConsensusTimestamp } from '../scoring/time.ts';
 import { parsePaymentProof } from '../scoring/txid.ts';

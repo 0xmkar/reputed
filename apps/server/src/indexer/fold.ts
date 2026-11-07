@@ -1,3 +1,8 @@
+// Replays decoded events into ChainState: each agent's owner, wallet and URI, each creator,
+// each link with its vouched wallets, grants, compromise reports, feedback with revocations,
+// credentials and responses. Histories (ownerHistory, walletHistory, VouchedWallet.from) are
+// kept rather than only current values, because the filter judges every review as of its own
+// consensus time (scoring/wallets.ts).
 import type { Address } from '@reputed/shared';
 import type { ConsensusTimestamp } from '../scoring/time.ts';
 import type { OwnerPeriodStart, WalletPeriodStart } from '../scoring/types.ts';
@@ -136,6 +141,7 @@ export function foldEvents(events: ChainEvent[]): ChainState {
       case 'Transfer': {
         const agent = identity(state, str('tokenId'));
         const owner = str('to') as Address;
+        // A transfer to the zero address (a burn) leaves the last owner recorded.
         if (owner === ZERO_ADDRESS) break;
         agent.owner = owner;
         agent.ownerHistory.push({ owner, from: timestamp });
@@ -167,6 +173,7 @@ export function foldEvents(events: ChainEvent[]): ChainState {
       }
       case 'AgentLinked': {
         const agentId = str('agentId');
+        // The contract links an agent once; first-wins here mirrors that.
         if (state.links.has(agentId)) break;
         state.links.set(agentId, {
           agentId,

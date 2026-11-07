@@ -1,3 +1,6 @@
+// Wallet sign-in. The client signs sessionMessage(wallet, issuedAt) once; the server answers
+// with an HMAC token good for seven days. There is no session table: the token is the session,
+// and SESSION_SECRET (or its derivation from RP_SIGNING_KEY) is what makes it verifiable.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { getAddress, isAddress, type Address } from 'viem';
 
@@ -32,6 +35,7 @@ export function readSessionToken(secret: string, token: string, nowSeconds: numb
   const [body, tag, ...rest] = token.split('.');
   if (!body || !tag || rest.length > 0) return null;
 
+  // MAC first, in constant time: unauthenticated input never reaches JSON.parse.
   const given = Buffer.from(tag, 'base64url');
   const expected = mac(secret, body);
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;

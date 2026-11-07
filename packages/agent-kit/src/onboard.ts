@@ -30,6 +30,16 @@ import type { HederaGateway, TxOutcome } from './gateway';
 import { CallReverted, type ContractResult, type MirrorClient } from './mirror';
 import type { OnboardState, StateStore } from './state';
 
+// Onboarding, in order: read the key's grant, find or register the agent, make sure the account can
+// receive the credential token, then link. The chain is the source of truth at every step; the state
+// store only says where to look first.
+//   - The grant is read before any transaction, so a key that cannot link costs no gas.
+//   - A registration is written to the state store before it is sent. A crash after the send is found
+//     again (by transaction ID, or by URI in the registry's logs) instead of minting a second agent.
+//   - The agent's own account sends and pays for every transaction. The creator's wallet is never
+//     involved; the API key only produces an EIP-712 LinkGrant signature that the contract recovers.
+//   - Every failure is a ReputedAgentError whose code says what to do, and running again is always safe.
+
 /** What the developer says about their agent. It becomes the ERC-8004 registration file. */
 export interface AgentProfile {
   name: string;
@@ -83,12 +93,16 @@ interface Grant {
   revoked: boolean;
 }
 
+/** 40 polls 1.5 s apart: a minute for the Mirror Node to index a transaction that reached consensus. */
 const RESULT_POLLS = 40;
 const RESULT_GAP_MS = 1_500;
 /** A registration whose transaction ID was never written down is given this long to show up. */
 const UNKNOWN_SUBMIT_GRACE_MS = 60_000;
+/** How long a LinkGrant signature stays valid: enough for the balance check and contract lookup before the send. */
 const DEADLINE_SECONDS = 600;
+/** Added to every balance check: the gas figure is a conversion at a fixed rate, not a quote. */
 const HEADROOM_HBAR = 0.1;
+/** HTS 184 TOKEN_NOT_ASSOCIATED_TO_ACCOUNT and 262 NO_REMAINING_AUTOMATIC_ASSOCIATIONS: an explicit association fixes both. */
 const NOT_ASSOCIATED_CODES = new Set([184, 262]);
 
 export function profileToFields(profile: AgentProfile): AgentFields {
@@ -105,6 +119,7 @@ export function profileToFields(profile: AgentProfile): AgentFields {
   };
 }
 
+/** The agent name inside a data: URI, for recognising an earlier registration when no state file is left. */
 function nameInUri(uri: string | null): string | null {
   const prefix = 'data:application/json;base64,';
   if (!uri?.startsWith(prefix)) return null;
@@ -141,6 +156,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
   }
   const owner = getAddress(account.evm_address);
 
+  // Keyed by network, registry and account: one state file serves several agents and survives a redeploy.
   const stateKey = `${config.chainId}:${creatorRegistry.toLowerCase()}:${gateway.accountId}`;
   let state: OnboardState = store.load(stateKey);
   const save = (next: OnboardState) => {
@@ -150,6 +166,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
 
   // Reads ------------------------------------------------------------------------------------
 
+  /** An eth_call through the Mirror Node: encode with viem, call, decode. No JSON-RPC relay is needed. */
   async function readRegistry<T>(to: Address, abi: readonly unknown[], functionName: string, args: unknown[]): Promise<T> {
     const data = encodeFunctionData({ abi, functionName, args } as never);
     const out = await mirror.call(to, data);
@@ -166,6 +183,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
   const creatorOf = async (agentId: string) =>
     getAddress(await readRegistry<Address>(creatorRegistry, creatorRegistryAbi, 'creatorOf', [BigInt(agentId)]));
 
+  /** Null when the token does not exist: ERC-721 ownerOf reverts rather than returning zero. */
   async function ownerOf(agentId: string): Promise<Address | null> {
     try {
       return getAddress(await readRegistry<Address>(identityRegistry, identityRegistryAbi, 'ownerOf', [BigInt(agentId)]));
@@ -175,6 +193,11 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     }
   }
 
+  /**
+   * An unknown key is refused always. Revoked, expired and exhausted keys are refused only when a link
+   * still has to happen: an agent linked earlier stays linked after its key dies, and a later run must
+   * still be able to look it up.
+   */
   function assertUsable(grant: Grant, forLinking: boolean): void {
     if (grant.creator === zeroAddress) {
       throw new ReputedAgentError(
@@ -194,6 +217,10 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
 
   // Sending ----------------------------------------------------------------------------------
 
+  /**
+   * Checked against the gas limit, not the expected usage, because Hedera needs the limit covered when
+   * the transaction is sent. Read fresh each time: an earlier step may have spent some.
+   */
   async function requireBalance(gas: bigint, what: string): Promise<void> {
     const fresh = await mirror.getAccount(gateway.accountId);
     const hbar = (fresh?.balance.balance ?? 0) / 1e8;
@@ -206,6 +233,11 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     }
   }
 
+  /**
+   * The receipt only says the transaction reached consensus. The logs (agent ID, serial) and the revert
+   * data live on the Mirror Node, which lags a few seconds behind, so poll it. A revert is a result too:
+   * the caller decodes it.
+   */
   async function waitForResult(tx: TxOutcome): Promise<ContractResult> {
     if (tx.status !== 'SUCCESS' && tx.status !== 'CONTRACT_REVERT_EXECUTED') {
       throw new ReputedAgentError('TRANSACTION_FAILED', `Hedera ended transaction ${tx.transactionId} with ${tx.status}.`, { transactionId: tx.transactionId });
@@ -218,6 +250,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     throw new ReputedAgentError('TIMEOUT', `Transaction ${tx.transactionId} was submitted but the Mirror Node has not reported its result. Run again to pick up where this left off.`, { transactionId: tx.transactionId });
   }
 
+  /** CreatorRegistry's custom error from the revert data, or null for a plain revert or another contract's error. */
   function revertName(result: ContractResult): { name: string; args: readonly unknown[] } | null {
     if (!result.error_message || !result.error_message.startsWith('0x') || result.error_message.length < 10) return null;
     try {
@@ -239,6 +272,11 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     }
   }
 
+  /**
+   * Associates only when it is certain to be needed. An account with slots (unlimited, or a count that
+   * may or may not be used up) is left to the link: if HTS then says the slots are full, the link loop
+   * associates and sends once more. That skips a transaction for every account that has slots.
+   */
   async function prepareAssociation(): Promise<void> {
     if (await mirror.isAssociated(gateway.accountId, credentialTokenId)) return;
     // Accounts with free automatic-association slots take the credential when it arrives.
@@ -248,6 +286,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
 
   // Step 1: the agent ------------------------------------------------------------------------
 
+  /** By exact URI when resuming a known registration, by agent name otherwise. Newest match wins. */
   async function findRegistered(uri?: string): Promise<string | null> {
     const logs = await mirror.registeredBy(identityRegistry, owner);
     for (const log of logs) {
@@ -257,10 +296,12 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     return null;
   }
 
+  /** Finishes a registration an earlier run started, or clears it when the chain shows it never happened. */
   async function resolvePending(): Promise<string | null> {
     const pending = state.pendingRegistration;
     if (!pending) return null;
 
+    // The transaction ID is known, so its result decides.
     if (pending.transactionId) {
       const result = await waitForResult({ transactionId: pending.transactionId, status: 'SUCCESS' });
       const agentId = result.result === 'SUCCESS' ? agentIdFromLogs(result.logs, identityRegistry) : null;
@@ -318,6 +359,11 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     return agentId;
   }
 
+  /**
+   * In order: an agentId the caller passed, the state file, a registration in flight, the registry's
+   * own logs for this account, and only then a new registration. The state file is a hint: an agentId
+   * this account no longer owns is dropped rather than trusted.
+   */
   async function resolveAgent(): Promise<string> {
     if (deps.agentId !== undefined) {
       const actual = await ownerOf(deps.agentId);
@@ -358,6 +404,11 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
 
   // Step 2: the link -------------------------------------------------------------------------
 
+  /**
+   * Signs LinkGrant with the API key for this agent and this owner, then has the agent's account send
+   * linkAgentWithGrant and pay for it. Nothing is written before the send: a repeated link reverts with
+   * AlreadyLinked instead of creating anything, so there is no duplicate to guard against.
+   */
   async function sendLink(): Promise<{ result: ContractResult; transactionId: string }> {
     const deadline = BigInt(Math.floor(deps.now() / 1000) + DEADLINE_SECONDS);
     const signature = await signLinkGrant(apiKey, {
@@ -376,6 +427,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
     const registryContract = await mirror.getContractId(creatorRegistry);
     if (!registryContract) throw new ReputedAgentError('MIRROR_ERROR', 'The Mirror Node does not know CreatorRegistry.');
     const tx = await gateway.executeContract(registryContract, data, GAS.linkAgentWithGrant);
+    // Recorded so the transaction ID is on disk if this run dies; the next run resumes from creatorOf, not from this.
     save({ ...state, pendingLink: { transactionId: tx.transactionId, startedAt: deps.now() } });
     return { result: await waitForResult(tx), transactionId: tx.transactionId };
   }
@@ -383,11 +435,13 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
   let creator = await creatorOf(agentId);
   let serial: number | null = null;
 
+  // Unlinked: the full grant rules apply now, because this run is about to use the key.
   if (creator === zeroAddress) {
     assertUsable(grant, true);
     await prepareAssociation();
     say(`Linking agent #${agentId} to its creator ${grant.creator}`);
 
+    // Each revert maps to an error code; only a missing token association earns a second send.
     let attempt = await sendLink();
     for (let retried = false; attempt.result.result !== 'SUCCESS'; retried = true) {
       const revert = revertName(attempt.result);
@@ -396,6 +450,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
 
       switch (revert?.name) {
         case 'AlreadyLinked':
+          // Another run got there first. Re-read who it belongs to and let the creator check below decide.
           creator = await creatorOf(agentId);
           break;
         case 'GrantNotFound':
@@ -423,6 +478,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
       break;
     }
 
+    // This run made the link: the serial is only ever read from the linking transaction's own logs.
     if (creator === zeroAddress) {
       serial = serialFromLogs(attempt.result.logs, creatorRegistry, agentId);
       creator = await creatorOf(agentId);
@@ -430,6 +486,7 @@ export async function onboard(deps: OnboardDeps): Promise<OnboardResult> {
   }
   save({ ...state, pendingLink: undefined, ...(serial !== null ? { serial } : {}) });
 
+  // Reached whether the link happened now or earlier: the agent must belong to the key's creator.
   if (creator !== grant.creator) {
     throw new ReputedAgentError(
       'LINKED_TO_OTHER_CREATOR',

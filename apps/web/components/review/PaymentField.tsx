@@ -44,6 +44,10 @@ interface SendProps {
   onPaid: (proof: string) => void;
 }
 
+/**
+ * Pays the agent's wallet from inside the review form. The amount and start time are written down
+ * before the wallet is asked, so a send that lost its hash can be found on Hedera by amount.
+ */
 function SendPayment({ agent, client, wallet, parties, usedIds, expanded, onSending, onPaid }: SendProps) {
   const id = useId();
   const price = agent.endpoints.x402PriceHbar;
@@ -58,6 +62,7 @@ function SendPayment({ agent, client, wallet, parties, usedIds, expanded, onSend
   const { sendTransactionAsync } = useSendTransaction();
   const value = toWeibars(amount);
   const entered = amount.trim() !== '';
+  // The amount is fixed once a send is in flight, and free again if a clean search found nothing.
   const editable = phase === 'idle' || phase === 'not-found';
 
   const forget = () => {

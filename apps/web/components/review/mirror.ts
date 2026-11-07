@@ -93,6 +93,7 @@ export async function fetchPaymentEntries(proof: PaymentProof, signal?: AbortSig
     const body = await lookup<{ transactions?: MirrorTransaction[] }>(`/api/v1/transactions/${proof.key}`, signal);
     return body?.transactions ?? [];
   }
+  // A 0x hash names a contract result. Its consensus timestamp finds the transaction record, which holds the transfers.
   const result = await lookup<{ timestamp?: string }>(`/api/v1/contracts/results/${proof.key}`, signal);
   if (!result?.timestamp) return [];
   const body = await lookup<{ transactions?: MirrorTransaction[] }>(`/api/v1/transactions?timestamp=${result.timestamp}`, signal);
@@ -222,7 +223,10 @@ export async function findSentPayment(
 
 const NEW_FEEDBACK = toEventSelector('NewFeedback(uint256,address,uint64,int128,uint8,string,string,string,string,string,bytes32)');
 
-/** Whether this wallet's review with this file hash is on-chain. Throws if the Mirror Node can't say. */
+/**
+ * Whether this wallet's review with this file hash is on-chain. The log query is narrowed by the
+ * event's indexed agentId and client, then matched on feedbackHash. Throws if the Mirror Node can't say.
+ */
 export async function findFeedback(agentId: string, client: Address, feedbackHash: Hash, sinceMs: number, signal?: AbortSignal): Promise<true | null> {
   const from = Math.floor((sinceMs - SEARCH_MARGIN_MS) / 1000);
   const to = Math.min(Math.ceil((Date.now() + SEARCH_MARGIN_MS) / 1000), from + MAX_SEARCH_MS / 1000);

@@ -1,3 +1,8 @@
+// The scoring formulas from docs/02-implementation-plan.md, Phase 5:
+//   w_i = max(0.2, C_reviewer / 100) * 0.5^(age_i / 90d) / n_i     A = min(avg_w(v), 100 - P_agent)
+//   C   = min(mean of reviewed agents' A weighted by distinct reviewers, 100 - P)
+//   P   = sum of confirmed penalties, each decayed 0.5^(age / 180d) from its confirmation
+// Published values are rounded to two decimals, and the fixed-point loop runs on rounded values.
 import type { Address, Tier } from '@reputed/shared';
 import type { ScoringConfig } from './config.ts';
 import { classifyReviews, compareReviews } from './filter.ts';

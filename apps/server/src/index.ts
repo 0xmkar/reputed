@@ -1,3 +1,6 @@
+// Process entry point. Config is validated before anything opens, so a bad environment exits
+// with the names of the offending variables and nothing else. The HTTP app and the epoch loop
+// run in one process and share one scorer store (indexer/runtime.ts).
 import { buildApp } from './app.ts';
 import { createChainClients, createCreatorRegistryGateway } from './chain.ts';
 import { ConfigError, loadConfig, type AppConfig } from './config.ts';
@@ -54,6 +57,7 @@ const epochLoop = startEpochLoop();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    // The loop finishes its current tick before either SQLite handle closes.
     void Promise.allSettled([epochLoop.stop(), app.close()]).finally(() => {
       store.close();
       getScorerRuntime().store.close();

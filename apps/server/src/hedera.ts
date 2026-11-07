@@ -1,3 +1,6 @@
+// Hedera SDK side: the operator account that pays for and signs HCS submits. OPERATOR_ID is
+// optional because the account can be found from the key's EVM address on the Mirror Node,
+// once funding has brought it into existence.
 import { Client, PrivateKey, TopicMessageSubmitTransaction } from '@hashgraph/sdk';
 import type { Address } from 'viem';
 import type { HederaConfig } from './config.ts';

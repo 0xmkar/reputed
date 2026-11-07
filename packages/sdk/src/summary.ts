@@ -8,6 +8,7 @@ export function summarise(agent: AgentDetail) {
     description: agent.description,
     score: agent.score.value,
     tier: agent.score.tier,
+    // Renamed from `isNew`: the API's name is a UI hint, this one says what the flag means.
     scoreInheritedFromCreator: agent.score.isNew,
     humanBacked: agent.humanBacked,
     status: agent.status,

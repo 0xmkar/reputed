@@ -19,6 +19,7 @@ export function SessionSync() {
   const { signMessageAsync } = useSignMessage();
   const session = useStoredSession();
   const { toast } = useToast();
+  // The wallet a prompt is open for. This effect reruns when `session` changes, so it must not ask twice.
   const signingFor = useRef<string | null>(null);
 
   // The server may no longer honor a stored token, for example after its secret changed.
@@ -34,7 +35,7 @@ export function SessionSync() {
 
   useEffect(() => {
     if (!isConnected || !address) return;
-    if (session && isAddressEqual(session.wallet, address)) return;
+    if (session && isAddressEqual(session.wallet, address)) return; // Already signed in as this wallet.
     if (wasSignInDeclined(address) || signingFor.current === address.toLowerCase()) return;
 
     const wallet = address;
@@ -46,6 +47,7 @@ export function SessionSync() {
         const body: SessionRequest = { wallet, issuedAt, signature };
         saveSession(await apiPost<SessionResponse>('/api/session', body));
       } catch (err) {
+        // Any failure, not only a refusal, quiets the prompt for this tab. Reconnecting the wallet asks again.
         markSignInDeclined(wallet);
         const { rejected, message } = describeWalletError(err);
         if (!rejected) toast('error', message || 'Could not sign in. Reconnect your wallet to try again.');

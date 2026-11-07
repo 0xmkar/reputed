@@ -1,3 +1,7 @@
+// Payment proofs as reviewers write them. Three spellings are accepted (SDK 0.0.x@s.n, Mirror
+// 0.0.x-s-n, and a 32-byte EVM hash) and reduced to one Mirror transaction ID, which is the
+// key the single-use check in classifyReviews runs on. The bounds below come from what Mirror
+// can answer, so a made-up ID is rejected here instead of being retried as a mirror failure.
 import type { ConsensusTimestamp } from './time.ts';
 
 const SDK_FORM = /^(\d+\.\d+\.\d+)@(\d{1,19})\.(\d{1,9})$/;

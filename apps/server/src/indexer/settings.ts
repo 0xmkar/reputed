@@ -1,3 +1,5 @@
+// Scorer settings, read without throwing on absence: the read API serves with whatever is set,
+// and startEpochLoop reports, by name, what the publishing loop still needs.
 import { HEDERA_TESTNET, IDENTITY_REGISTRY, REPUTATION_REGISTRY } from '@reputed/shared';
 
 export interface ScorerSettings {

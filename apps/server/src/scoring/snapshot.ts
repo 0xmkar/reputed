@@ -1,3 +1,7 @@
+// Snapshots and what makes them reproducible. inputsHash is keccak over canonical JSON of
+// exactly what computeScores reads (asOf, config, creators, agents, reviews with their file
+// hashes and sorted transfers, accounts), so two scorers with the same public data produce the
+// same hash whatever order they fetched it in. Epoch arithmetic stays in BigInt nanoseconds.
 import { keccak256, stringToHex } from 'viem';
 import type { ScoringConfig } from './config.ts';
 import { compareReviews } from './filter.ts';
@@ -17,6 +21,7 @@ export function canonicalJson(value: unknown): string {
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
 }
 
+/** The file body is replaced by its keccak: the bytes stay pinned and the hash input stays small. */
 function canonicalReview(review: ReviewInput) {
   const { fileBase64, payment, ...rest } = review;
   return {

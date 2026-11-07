@@ -36,6 +36,11 @@ function RememberedWallet({ wallet }: { wallet: Address }) {
   );
 }
 
+/**
+ * Picks the screen by identity: a live wallet runs the flow, a remembered one can only show its
+ * status or ask to reconnect, and no wallet gets Connect. The proof is bound to a fresh wallet
+ * signature, so a remembered wallet cannot verify.
+ */
 export function VerifyScreen() {
   const { address, live, restoring } = useIdentity();
 

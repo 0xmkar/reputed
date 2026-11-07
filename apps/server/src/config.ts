@@ -1,3 +1,7 @@
+// Environment parsing. Every variable is validated up front and all problems are reported
+// together, by name only, so a secret never appears in a startup error. Format checks here
+// catch keys that a library would accept and then fail with, or silently reinterpret as a
+// different key, at first use.
 import { createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
 import { HEDERA_TESTNET, IDENTITY_REGISTRY } from '@reputed/shared';
@@ -106,6 +110,7 @@ const serverSchema = hederaSchema.extend({
 type Env = Record<string, string | undefined>;
 
 function parseEnv<S extends z.ZodType>(schema: S, env: Env): z.output<S> {
+  // An empty string counts as unset, so `KEY=` in a .env file reads as missing, not invalid.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
   const parsed = schema.safeParse(cleaned);
   if (parsed.success) return parsed.data;

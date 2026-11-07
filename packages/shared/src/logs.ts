@@ -1,3 +1,6 @@
+// Reading agent IDs, URIs and credential serials out of transaction logs. The same functions serve the
+// web app (logs from the JSON-RPC relay) and the agent kit (logs from the Mirror Node), which is why
+// TxLog is the lowest common shape and addresses are compared case-insensitively.
 import { decodeEventLog, toEventSelector } from 'viem';
 import { IDENTITY_REGISTRY } from './constants';
 import { creatorRegistryAbi } from './abi/creatorRegistry';
@@ -23,12 +26,16 @@ const from = (log: TxLog, address: string) => log.address.toLowerCase() === addr
 export function agentIdFromLogs(logs: readonly TxLog[], identityRegistry: string = IDENTITY_REGISTRY): string | null {
   const registry = logs.filter((log) => from(log, identityRegistry));
   const registered = registry.find((log) => log.topics[0] === REGISTERED);
+  // Fallback: the ERC-721 mint (Transfer from the zero address) carries the same ID in its last topic.
   const minted = registry.find((log) => log.topics[0] === TRANSFER && log.topics[1] === ZERO_TOPIC);
   const topic = registered ? registered.topics[1] : minted?.topics[3];
   return topic === undefined ? null : BigInt(topic).toString();
 }
 
-/** The credential serial from this agent's AgentLinked log, or null if these logs hold none. */
+/**
+ * The credential serial from this agent's AgentLinked log, or null if these logs hold none. The agent
+ * ID is checked so a transaction that touches several agents cannot hand back another one's serial.
+ */
 export function serialFromLogs(logs: readonly TxLog[], creatorRegistry: string, agentId: string): number | null {
   for (const log of logs) {
     if (!from(log, creatorRegistry)) continue;

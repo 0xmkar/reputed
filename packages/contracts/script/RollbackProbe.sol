@@ -11,6 +11,8 @@ contract RollbackProbe {
 
     event Caught(bytes reason);
 
+    /// Reverts if the revoke succeeds, so a successful transaction always means the nested frame
+    /// reverted. The reason is emitted so the log shows the failure came from the wipe, not earlier.
     function revokeAndCatch(ICreatorRegistry registry, address holder, int64 serial) external {
         (bool ok, bytes memory reason) =
             address(registry).call(abi.encodeCall(ICreatorRegistry.revokeCredential, (holder, serial)));

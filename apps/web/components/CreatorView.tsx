@@ -154,9 +154,9 @@ function Penalties({ creator }: { creator: CreatorDetail }) {
 
 function CreatorSkeleton() {
   return (
-    <div className="agent-hero" aria-hidden="true">
+    <div className="profile profile-top" aria-hidden="true">
       <span className="skeleton skeleton-ring skeleton-ring-lg" />
-      <div className="agent-hero-text">
+      <div className="profile-text">
         <span className="skeleton skeleton-text" style={{ width: '14em', height: '1.6em' }} />
         <span className="skeleton skeleton-text" style={{ width: '10em' }} />
       </div>
@@ -186,38 +186,74 @@ export function CreatorView({ address }: { address: string }) {
 
   return (
     <article className="agent-page">
-      <header className="agent-hero">
-        <div className="agent-score">
-          <ScoreRing value={creator.score} tier={creator.tier} size="lg" />
-          <TierBadge tier={creator.tier} />
-        </div>
-        <div className="agent-hero-text">
-          <h1>Creator</h1>
-          <div className="row">
-            <AddressChip address={creator.address} />
-            <VerifiedCreatorBadge />
+      <section className="profile">
+        <header className="profile-top">
+          <div className="profile-text" style={{ gridColumn: '1 / 3' }}>
+            <div className="profile-meta">
+              <VerifiedCreatorBadge />
+              <span>Creator since {formatDate(creator.verifiedAt)}</span>
+            </div>
+            <h1>{isOwner ? 'Your creator profile' : 'Creator'}</h1>
+            <div className="row">
+              <AddressChip address={creator.address} />
+              {isOwner && (
+                <Link href="/dashboard" className="btn btn-primary btn-small">
+                  Add agent
+                </Link>
+              )}
+            </div>
+            <p className="muted" id="creator-score-info">
+              The creator score is the average of this creator&apos;s agents, capped at 100 minus penalties. Every agent they add starts from it.
+            </p>
           </div>
-          <p className="muted">Creator since {formatDate(creator.verifiedAt)}</p>
-          <p className="muted" id="creator-score-info">
-            Creator score: average of your agents, capped at 100 minus penalties.
-          </p>
-        </div>
-        {isOwner && (
-          <Link href="/dashboard" className="btn btn-primary">
-            Add agent
-          </Link>
-        )}
-      </header>
-
-      <section className="card">
-        <h2>Penalties</h2>
-        <Penalties creator={creator} />
+          <div className="profile-score">
+            <ScoreRing value={creator.score} tier={creator.tier} size="lg" />
+            <TierBadge tier={creator.tier} />
+          </div>
+        </header>
+        <dl className="profile-stats">
+          <div>
+            <dt>Agents</dt>
+            <dd>{creator.agents.length}</dd>
+          </div>
+          <div>
+            <dt>Human-backed</dt>
+            <dd>{creator.agents.filter((a) => a.humanBacked).length}</dd>
+          </div>
+          <div>
+            <dt>Reviews counted</dt>
+            <dd>{creator.agents.reduce((n, a) => n + a.reviewsCounted, 0)}</dd>
+          </div>
+          <div>
+            <dt>Penalty points</dt>
+            <dd>{creator.penaltyTotal > 0 ? `−${points(creator.penaltyTotal)}` : '0'}</dd>
+          </div>
+        </dl>
       </section>
 
-      <section>
-        <h2>Agents</h2>
-        <AgentsTable agents={creator.agents} isOwner={isOwner} />
-      </section>
+      <div className="layout-2col">
+        <section>
+          <div className="section-head">
+            <h2>
+              Agents
+              <span className="count">{creator.agents.length}</span>
+            </h2>
+          </div>
+          <AgentsTable agents={creator.agents} isOwner={isOwner} />
+        </section>
+        <aside className="rail">
+          <section className="card">
+            <h2>Penalties</h2>
+            <Penalties creator={creator} />
+          </section>
+          <div className="rail-note">
+            <p>
+              A penalty is confirmed when two different creators report the same misconduct within 30 days. Fraud costs 20 points, a failed
+              settlement 10, and points halve every 180 days.
+            </p>
+          </div>
+        </aside>
+      </div>
     </article>
   );
 }

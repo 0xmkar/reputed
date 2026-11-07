@@ -8,13 +8,18 @@ import { chainClient } from '@/lib/chainClient';
 import { useIdentity } from '@/lib/useIdentity';
 import { CREATOR_REGISTRY } from '@/lib/contracts';
 import { InlineError } from '../InlineError';
+import { PageHead } from '../PageHead';
 import { WalletButton } from '../WalletButton';
 import { ApiKeys } from './ApiKeys';
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <section className="onboard" aria-busy={undefined}>
-      <h1>Dashboard</h1>
+      <PageHead
+        eyebrow="Dashboard"
+        title="API keys for your agents"
+        lede="A key lets an agent register itself and link to you as its verified human. Keep it secret, set how many agents it may link, and revoke it any time."
+      />
       {children}
     </section>
   );

@@ -5,8 +5,13 @@ import { HEDERA_TESTNET } from './constants';
 // A creator's API key is 32 random bytes made in the browser. The grant key is derived from it, and
 // only that key's address goes on-chain (CreatorRegistry.authorizeGrant). The Reputed server never
 // sees the secret, so it cannot link an agent to anyone.
+//
+// Everything here runs in both the browser (the dashboard mints and authorizes keys) and Node (the
+// agent signs with one), so it uses btoa/atob and WebCrypto rather than Buffer. No function ever
+// puts the key into an error message, so a failed parse is safe to log.
 
 export const API_KEY_PREFIX = 'rpk';
+/** Mixed into the key derivation so the signing key is specific to this scheme and version. */
 const DERIVATION_TAG = 'reputed-grant-v1';
 /** The EIP-712 domain of CreatorRegistry v2. */
 export const GRANT_DOMAIN_NAME = 'ReputedCreatorRegistry';
@@ -53,7 +58,11 @@ export function parseApiKey(apiKey: string): { environment: ApiKeyEnvironment; s
   return { environment: match[1] as ApiKeyEnvironment, secret: bytesToHex(bytes) };
 }
 
-/** The private key behind a creator's API key. It signs LinkGrant messages. */
+/**
+ * The private key behind a creator's API key. It signs LinkGrant messages. The secret itself is
+ * never used as a private key: the signing key is keccak256(tag ‖ secret), so the value a creator
+ * pastes into an agent's environment and the value that signs are different bytes.
+ */
 export function grantPrivateKey(apiKey: string): Hex {
   const { secret } = parseApiKey(apiKey);
   return keccak256(concat([stringToHex(DERIVATION_TAG), secret]));
@@ -74,6 +83,11 @@ export interface LinkGrantInput {
   chainId?: number;
 }
 
+/**
+ * The EIP-712 message CreatorRegistry.linkAgentWithGrant recovers. `owner` must equal the caller, so
+ * a signature is good for one agent, one sender and a window ending at `deadline`: it cannot be moved
+ * to another agent or replayed by someone else. Both sides must hash exactly this struct.
+ */
 export function linkGrantTypedData(input: LinkGrantInput) {
   if (!isAddress(input.creatorRegistry) || !isAddress(input.owner)) throw new TypeError('Invalid address');
   return {

@@ -41,6 +41,7 @@ async function mirrorCall(tx: CallRequest): Promise<Hex | undefined> {
   if (res.ok) return body.result;
   const failure = body._status?.messages?.[0];
   if (failure?.message !== 'CONTRACT_REVERT_EXECUTED') return undefined;
+  // Rethrown in the shape viem expects from eth_call, so readContract decodes the revert data as usual.
   throw new RpcRequestError({
     body: { method: 'eth_call', params: [request] },
     error: { code: EXECUTION_REVERTED, message: 'execution reverted', data: failure.data },
@@ -62,6 +63,7 @@ export const chainClient = createPublicClient({
         return relay.request({ method, params });
       },
     },
+    // No retries here: a Mirror Node miss already falls through to the relay, which retries once itself.
     { retryCount: 0 },
   ),
 });

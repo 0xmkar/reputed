@@ -34,6 +34,7 @@ contract Bot {
         return this.onERC721Received.selector;
     }
 
+    /// ERC-1271 answer that accepts any signature, for setAgentWallet calls that name a Bot as the wallet.
     function isValidSignature(bytes32, bytes calldata) external pure returns (bytes4) {
         return 0x1626ba7e;
     }
@@ -77,6 +78,7 @@ contract Preflight {
     address private _token;
 
     constructor(uint256 scenario, Accounts memory accounts, uint256 initValue) payable {
+        // Scenario 6 creates its own token, so it skips the registry deploy.
         if (scenario == 6) {
             _rawRules(accounts, initValue);
         } else {
@@ -96,6 +98,7 @@ contract Preflight {
         }
     }
 
+    /// This contract takes all three roles, so the scenarios can register and issue directly.
     function _deploy(address identity, uint256 initValue) private {
         _registry = new CreatorRegistry(identity, address(this), address(this), address(this));
         _registry.initCredentialToken{value: initValue}();
@@ -224,6 +227,7 @@ contract Preflight {
 
     function _createOwnToken(uint256 initValue) private returns (address token) {
         H.TokenKey[] memory keys = new H.TokenKey[](1);
+        // 28 = freeze (4) | wipe (8) | supply (16), the same keys CreatorRegistry sets.
         keys[0] = H.TokenKey(28, H.KeyValue(false, address(this), "", "", address(0)));
         H.HederaToken memory spec =
             H.HederaToken("Preflight", "PF", address(this), "", false, 0, false, keys, H.Expiry(0, address(this), 7_776_000));
@@ -330,6 +334,7 @@ contract Preflight {
         return abi.encodeCall(_registry.issueCredential, (to, metadata));
     }
 
+    /// The gas figures are what the README's limits table lists as simulated gas.
     function _measure(string memory label, bytes memory data) private {
         uint256 before = gasleft();
         (bool ok,) = address(_registry).call(data);
@@ -343,6 +348,7 @@ contract Preflight {
         _check("holder associated", ok && _code(result) == HederaResponseCodes.SUCCESS);
     }
 
+    /// -1 stands for a revert; no response code is negative.
     function _hts(bytes memory data) private returns (int64) {
         (bool ok, bytes memory result) = HTS.call(data);
         return ok ? _code(result) : int64(-1);
@@ -371,6 +377,7 @@ contract Preflight {
         return abi.decode(result, (int64));
     }
 
+    /// Exact match on the encoded error, so a failure at another step or with another code reads as FAIL.
     function _isHtsFailure(bytes memory result, bytes4 selector, int64 code) private pure returns (bool) {
         return keccak256(result) == keccak256(abi.encodeWithSelector(Hts.HtsCallFailed.selector, selector, code));
     }

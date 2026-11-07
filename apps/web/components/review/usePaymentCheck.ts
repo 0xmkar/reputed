@@ -15,6 +15,10 @@ import {
   type VerifiedPayment,
 } from './mirror';
 
+// Decides, before the review is signed, whether the chosen payment will count. The checks are the
+// scorer's: the transaction exists and succeeded, moves value from the reviewer to the agent, is not
+// older than the agent, and has not been cited by another counted review from this wallet.
+
 const POLL_MS = 2_000;
 const LOOK_FOR_MS = 30_000;
 
@@ -121,6 +125,7 @@ export function usePaymentCheck(agent: AgentDetail, client: Address, raw: string
 
   const proof = settling ? null : parsePaymentProof(raw);
   const proofKey = proof?.key ?? null;
+  // A pasted ID that is not found keeps polling for LOOK_FOR_MS, then is reported missing until Refresh.
   const [searching, setSearching] = useState(true);
   const [searchRun, setSearchRun] = useState(0);
   useEffect(() => {

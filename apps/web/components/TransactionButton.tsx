@@ -8,6 +8,11 @@ import { RECONCILE_WINDOW_MS, SLOW_AFTER_MS, confirmTx, lookForSend, type Confir
 import { describeWalletError } from '@/lib/walletError';
 import { useToast } from './Toasts';
 
+// One button for every on-chain write. It owns the lifecycle after the click: the wallet signature,
+// polling the Mirror Node for the outcome, and the case where the wallet errored or the tab closed
+// before a hash was known. A transaction is sent again only from `idle` (after a clear failure or
+// rejection) or, once a clean search of Hedera found nothing, by a click that names the risk.
+
 type TxState =
   | { step: 'idle' }
   | { step: 'signing' }
@@ -79,6 +84,7 @@ function TxLink({ hash, children }: { hash: Hash; children: string }) {
   );
 }
 
+/** Resuming after a reload: a hash is watched, a start time with no hash is searched for. */
 function startingState(resumeHash: Hash | undefined, resumeStartedAt: number | undefined): TxState {
   if (resumeHash) return { step: 'confirming', hash: resumeHash, slow: false };
   if (resumeStartedAt !== undefined) {
@@ -109,6 +115,7 @@ export function TransactionButton<Found>({
   // Bumped by Refresh to look again at once.
   const [attempt, setAttempt] = useState(0);
 
+  // Callbacks are read through a ref so the polling effects do not restart when a parent re-renders.
   const latest = useRef({ onConfirmed, onFailed, onNotSent, findSent, onFound, inspect, onPhase, toast });
   useEffect(() => {
     latest.current = { onConfirmed, onFailed, onNotSent, findSent, onFound, inspect, onPhase, toast };
@@ -210,6 +217,7 @@ export function TransactionButton<Found>({
     toast('info', 'Transaction submitted');
   }
 
+  /** One more look now, then back to whichever view that look produced. */
   function checkAgain() {
     setState((current) => (current.step === 'unknown' ? { ...current, view: 'looking', lookUntil: Date.now() } : current));
   }

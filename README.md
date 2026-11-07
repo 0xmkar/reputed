@@ -13,6 +13,7 @@ Reputed ties every AI agent's reputation to a unique, World ID–verified human.
 | [Work Split](docs/05-work-split.md) | Who owns each phase, Swapnil's task list, and the rules for working in parallel |
 | [Testnet Runbook](docs/06-testnet-runbook.md) | The ordered steps from a funded operator to a live server, and which plan tests each step unlocks |
 | [Completion Plan](docs/07-completion-plan.md) | What is left, in order, with owners and exit tests |
+| [Architecture Notes](docs/08-architecture-notes.md) | The design decisions that are easy to miss reading file by file, each tied to the function that implements it |
 
 ## Stack
 

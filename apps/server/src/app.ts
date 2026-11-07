@@ -41,6 +41,11 @@ export interface AppOptions {
   scorer?: ScorerRuntime;
 }
 
+/**
+ * Wires every route behind one error handler, one CORS policy and per-route rate limits.
+ * The rate-limit plugin is registered with global: false so each route picks its own key and
+ * bucket (routes/rateLimits.ts). Dependencies arrive as interfaces so tests pass fakes.
+ */
 export async function buildApp(deps: AppDeps, options: AppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: options.logger ?? false,
@@ -48,6 +53,7 @@ export async function buildApp(deps: AppDeps, options: AppOptions = {}): Promise
     // IDs and nullifier hashes.
     logController: new LogController({ disableRequestLogging: true }),
     trustProxy: deps.trustProxy.length > 0 ? deps.trustProxy : false,
+    // The largest legitimate body is a few KB (an agent file, an IDKit result).
     bodyLimit: 64 * 1024,
   });
 

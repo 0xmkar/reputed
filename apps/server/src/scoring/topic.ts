@@ -1,3 +1,7 @@
+// The scores HCS topic: publishing snapshots, chunked when over 1,024 bytes, and reading the
+// newest one back. readLatestSnapshot groups chunks by their initial transaction ID and parses
+// a group only once every chunk is present, so a config message or a half-read snapshot is
+// never taken for the latest.
 import { TopicMessageSubmitTransaction } from '@hashgraph/sdk';
 import type { HederaConfig } from '../config.ts';
 import { createOperatorClient } from '../hedera.ts';
@@ -31,6 +35,8 @@ export function createSnapshotPublisher(config: HederaConfig, topicId: string): 
       });
       const hedera = await client;
 
+      // One transaction per chunk. The number kept is the last chunk's, which is also the max
+      // readLatestSnapshot reports for the group.
       const responses = await buildSnapshotMessage(topicId, message).executeAll(hedera);
       let sequenceNumber: number | null = null;
       for (const response of responses) {

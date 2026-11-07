@@ -4,6 +4,11 @@ import { useSyncExternalStore } from 'react';
 import { isAddress, type Address } from 'viem';
 import type { SessionResponse } from '@reputed/shared';
 
+// The sign-in token lives in localStorage so a reload, or a wallet that will not reconnect, still
+// knows who the visitor is. Components read it through useSyncExternalStore, so they all see one
+// value, and another tab's sign-in or sign-out arrives through the storage event. The "declined"
+// marks live in sessionStorage instead: refusing to sign should quiet the prompt for this tab only.
+
 const KEY = 'reputed.session.v1';
 const DECLINED = 'reputed.session.declined.';
 
@@ -14,6 +19,7 @@ const listeners = new Set<() => void>();
 let cachedRaw: string | null | undefined;
 let cachedValue: StoredSession | null = null;
 
+/** Malformed or expired text reads as signed out, so a stale token never shows a stale wallet. */
 function parse(raw: string | null): StoredSession | null {
   if (!raw) return null;
   try {
@@ -113,6 +119,7 @@ export function wasSignInDeclined(wallet: Address): boolean {
   }
 }
 
+/** Called when the person connects a wallet themselves: a deliberate connect earns one more prompt. */
 export function allowSignInPrompt(): void {
   try {
     Object.keys(sessionStorage)

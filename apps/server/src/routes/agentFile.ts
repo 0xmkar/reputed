@@ -1,3 +1,5 @@
+// POST /api/agent-file: validates an ERC-8004 registration file and returns the data: URI and
+// keccak hash the client passes to register(). Nothing is stored or published here.
 import type { FastifyInstance } from 'fastify';
 import type { AgentFileResponse } from '@reputed/shared';
 import { keccak256 } from 'viem';

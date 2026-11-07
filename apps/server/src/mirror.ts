@@ -1,3 +1,6 @@
+// Mirror Node reads for the verifier: EVM hash to Hedera transaction ID, and EVM address to
+// account ID. The indexer has its own client with backoff (indexer/mirror.ts); this one only
+// needs a short, bounded poll for a transaction the server just sent.
 import type { Address, Hex } from 'viem';
 
 export interface MirrorOptions {
@@ -25,6 +28,8 @@ export function createMirror(baseUrl: string, options: MirrorOptions = {}): Mirr
     return res.json();
   }
 
+  // Two hops: the contract result gives the consensus timestamp, and the transaction at exactly
+  // that timestamp carries the Hedera ID.
   async function lookupTransactionId(hash: Hex): Promise<string | null> {
     const result = (await getJson(`/api/v1/contracts/results/${hash}`)) as {
       timestamp?: string;
@@ -38,6 +43,7 @@ export function createMirror(baseUrl: string, options: MirrorOptions = {}): Mirr
 
   return {
     async transactionIdOf(hash) {
+      // Defaults give about ten seconds; after that the response carries only the EVM hash.
       for (let attempt = 0; attempt < attempts; attempt++) {
         if (attempt > 0) await sleep(delayMs);
         try {

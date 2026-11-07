@@ -14,6 +14,9 @@ import {
   type Review,
   type ReviewResponse,
 } from '@reputed/shared';
+// Read API over the live view. Everything here derives from ScorerRuntime.view(), which is
+// local state: only a 'cold' lookup of an agent nobody linked or asked for before reaches the
+// Mirror Node, and that path is rationed per IP and per process (createLookupGate).
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { ApiHttpError, badRequest, chainError } from '../errors.ts';

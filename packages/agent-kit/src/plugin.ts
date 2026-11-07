@@ -2,6 +2,10 @@ import { TOOL_TYPE, untypedQueryOutputParser, type Context, type Plugin, type To
 import { ReputedError, summarise, type ReputedClient } from '@reputed/sdk';
 import { z } from 'zod';
 
+// Three read-only tools for the Hedera Agent Kit. They are QUERY tools that call the Reputed API, not
+// Hedera, so the kit's own client and context arguments are ignored. Failures are returned inside the
+// envelope rather than thrown: the model sees the error code and can act on it instead of the run dying.
+
 export const REPUTED_TOOL_NAMES = {
   MY_REPUTATION: 'reputed_my_reputation',
   GET_AGENT: 'reputed_get_agent',
@@ -21,6 +25,7 @@ function envelope(raw: Record<string, unknown>, humanMessage: string): string {
   return JSON.stringify({ raw: { status: 'SUCCESS', ...raw }, humanMessage });
 }
 
+/** The same envelope with status ERROR, carrying the ReputedError code when there is one. */
 function failure(error: unknown): string {
   const code = error instanceof ReputedError ? error.code : 'ERROR';
   const message = error instanceof Error ? error.message : String(error);
@@ -35,6 +40,7 @@ function query(tool: Omit<Tool, 'toolType' | 'outputParser'>): Tool {
 export function createReputedPlugin(source: PluginSource): Plugin {
   const { client } = source;
 
+  // Takes no parameters: the agent's own ID was fixed at connect time, so the model cannot ask about the wrong agent.
   const myReputation = query({
     method: REPUTED_TOOL_NAMES.MY_REPUTATION,
     name: 'Get my reputation',
@@ -67,6 +73,7 @@ export function createReputedPlugin(source: PluginSource): Plugin {
     },
   });
 
+  // The gate. A failed check is a normal result with ok: false and a reason; only an unreachable API is an error.
   const verifyCounterparty = query({
     method: REPUTED_TOOL_NAMES.VERIFY_COUNTERPARTY,
     name: 'Verify a counterparty before paying or hiring it',

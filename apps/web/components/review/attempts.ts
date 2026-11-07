@@ -54,6 +54,8 @@ function remove(key: string): void {
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const hashOf = (value: unknown): { hash?: Hash } => (typeof value === 'string' && isHash(value) ? { hash: value } : {});
 
+// The loaders check every field. Text left by an older build must read as no attempt, not throw.
+
 export function loadPaymentAttempt(client: Address, agentId: string): PaymentAttempt | null {
   const raw = read(keyFor('payment', client, agentId));
   if (!raw || !isTime(raw['startedAt']) || typeof raw['weibars'] !== 'string' || !/^\d+$/.test(raw['weibars'])) return null;

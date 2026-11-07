@@ -9,6 +9,10 @@ import {
 } from '@reputed/shared';
 import { apiPost } from '@/lib/api';
 
+// The review file is what the reviewer signs and what the server publishes to HCS. Its keccak-256
+// goes on-chain as feedbackHash, so the file is built, signed and uploaded before giveFeedback is
+// sent, and the transaction only references it.
+
 export const MAX_COMMENT_LENGTH = 500;
 /** The server refuses a file of this many bytes or more, because HCS caps a message at 1,024. */
 export const MAX_FILE_BYTES = 1024;
@@ -41,6 +45,7 @@ export interface ReviewDraft {
   proofOfPayment?: string | undefined;
 }
 
+/** An empty comment and a missing proof are left out, not written as empty strings. */
 export function buildReviewFile(draft: ReviewDraft, createdAt: Date): ReviewFile {
   if (!TAG2.test(draft.tag2)) throw new Error('That category can’t be used in a review.');
   const comment = draft.comment.trim();

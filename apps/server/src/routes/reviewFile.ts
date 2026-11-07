@@ -1,3 +1,7 @@
+// POST /api/review-file: validates a review file, checks the reviewer signed exactly these
+// bytes, posts them to the reviews HCS topic and returns the hcs:// URI and keccak hash the
+// reviewer then passes to giveFeedback. The scorer later fetches the message back and checks
+// the hash and fields against the on-chain feedback (scoring/filter.ts).
 import type { FastifyInstance } from 'fastify';
 import { HEDERA_TESTNET, serializeReviewFile, type ReviewFileResponse } from '@reputed/shared';
 import { getAddress, isAddress, keccak256, type Address } from 'viem';
@@ -80,6 +84,8 @@ export function registerReviewFileRoute(app: FastifyInstance, deps: ReviewFileDe
         );
       }
 
+      // The reviewer signs the serialized bytes that are published, so the signature cannot
+      // drift from the file.
       const client = file.clientAddress.slice(CAIP_PREFIX.length) as Address;
       if (!(await isSignedBy(client, { raw: bytes }, signature))) {
         throw badRequest('Invalid review file: check "signature". clientAddress must sign the file.');

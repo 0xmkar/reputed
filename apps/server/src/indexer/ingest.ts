@@ -1,3 +1,9 @@
+// Log ingestion. Each source (identity, reputation, creatorRegistry) has its own cursor: the
+// consensus timestamp of the last log on the last page saved. Nothing is deleted or rewritten
+// on ingest, since Hedera consensus is final; rows only ever accumulate. Lag is handled by the
+// caller: ScorerRuntime.sync reads the mirror's latest ingested time before this runs and folds
+// only events at or below it, so logs newer than that time wait for the next sync even when a
+// page has already returned them.
 import { decodeLog, type EventSource } from './decode.ts';
 import type { MirrorClient } from './mirror.ts';
 import type { Store } from './store.ts';

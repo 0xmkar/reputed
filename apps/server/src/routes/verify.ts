@@ -1,3 +1,8 @@
+// POST /api/verify: one World ID proof plus a wallet signature becomes one on-chain creator.
+// Checks run cheapest first: body shape, local proof policy (no network), per-wallet limit,
+// in-flight claim, local store, contract reads, World's verifier, then the transaction. A
+// malformed request costs nothing, and World's verifier and the transaction only see requests
+// that passed everything else.
 import type { VerifyResponse } from '@reputed/shared';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { getAddress, isAddress, zeroAddress, type Address, type Hex } from 'viem';
@@ -95,6 +100,7 @@ export function registerVerifyRoute(app: FastifyInstance, deps: VerifyDeps): voi
         parsed.data.walletSignature,
         deps.world,
       );
+      // After checkProofPolicy, which verified the wallet signature: see provenLimiter.
       await limitWallet(req, wallet);
 
       const release = claim(proof.nullifierHash, wallet);
@@ -125,6 +131,7 @@ async function verifyAndRegister(
   const { registry, store, verifier } = deps;
   const { nullifierHash } = proof;
 
+  // Local store first: a registration seconds old is not yet visible through the relay.
   const known = store.byNullifier(nullifierHash);
   if (known?.status === 'registered') throw alreadyRegistered(known.wallet);
   if (store.isRegisteredWallet(wallet)) throw walletTaken();

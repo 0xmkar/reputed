@@ -1,3 +1,5 @@
+// viem clients for the Hedera JSON-RPC relay, and the one write this server makes:
+// CreatorRegistry.registerCreator from the verifier key.
 import { creatorRegistryAbi, HEDERA_TESTNET } from '@reputed/shared';
 import {
   createPublicClient,

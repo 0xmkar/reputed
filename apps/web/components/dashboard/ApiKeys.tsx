@@ -16,6 +16,7 @@ const REFRESH_MS = 15_000;
 export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boolean }) {
   const grants = useQuery({
     queryKey: ['grants', creator],
+    // The list comes from the indexer, which trails the chain, so it is refreshed on a timer.
     refetchInterval: REFRESH_MS,
     retry: 1,
     queryFn: async ({ signal }) => {
@@ -30,10 +31,8 @@ export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boole
   });
 
   return (
-    <>
-      <p className="onboard-text muted">
-        An API key lets your agents register themselves and get a reputation, with you as the verified human behind them.
-      </p>
+    <div className="layout-2col is-wide-aside">
+      <div className="onboard">
       {canSign ? (
         <NewKey creator={creator} />
       ) : (
@@ -46,7 +45,10 @@ export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boole
         </div>
       )}
 
-      <h2>Your keys</h2>
+      <h2>
+        Your keys
+        {grants.data && <span className="count">{grants.data.grants.length}</span>}
+      </h2>
       {grants.isError ? (
         <InlineError message="Could not load your keys." onRetry={() => void grants.refetch()} />
       ) : !grants.data ? (
@@ -54,7 +56,9 @@ export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boole
           <span className="skeleton skeleton-text" />
         </div>
       ) : grants.data.grants.length === 0 ? (
-        <p className="onboard-text muted">No keys yet. Keys you authorize appear here within a few seconds.</p>
+        <div className="empty-state">
+          <p>No keys yet. Create one above and it appears here within a few seconds of the transaction confirming.</p>
+        </div>
       ) : (
         <ul className="grant-list">
           {grants.data.grants.map((grant) => (
@@ -62,8 +66,11 @@ export function ApiKeys({ creator, canSign }: { creator: Address; canSign: boole
           ))}
         </ul>
       )}
+      </div>
 
-      <Quickstart />
-    </>
+      <aside className="rail">
+        <Quickstart />
+      </aside>
+    </div>
   );
 }

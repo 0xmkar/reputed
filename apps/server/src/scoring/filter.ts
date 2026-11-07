@@ -1,3 +1,8 @@
+// The review filter: which NewFeedback events count. Rules, in the order their failures are
+// reported: file hash and fields match the chain, value within 0..100, reviewer human-backed at
+// the review's time, payment verified and unclaimed, reviewer never backed by the agent's own
+// creator; a revocation overrides them all. Everything here is pure and judged as of each
+// review's consensus timestamp, so the same inputs classify the same way on any machine.
 import type { Address, ExclusionReason } from '@reputed/shared';
 import { keccak256 } from 'viem';
 import { compareConsensus } from './time.ts';
@@ -138,8 +143,10 @@ export function compareReviews(a: ReviewInput, b: ReviewInput): number {
 
 /**
  * Applies the plan's filter in order, so the first failed rule is the reason shown.
- * Runs in consensus order because the first eligible review to cite a payment claims it.
- * Only eligible reviews claim one: otherwise anyone could burn a stranger's payment by citing it.
+ * Runs in consensus order because the first review to cite a payment claims it. A review claims
+ * one only after passing the file, value, human-backed and payment rules, and only while it is
+ * unrevoked (revoking frees the payment): otherwise anyone could burn a stranger's payment by
+ * citing it.
  * Linked agents go first, so an unlinked agent someone looked up cannot take a payment from one:
  * linked agents then classify exactly as they do in an epoch, which holds no unlinked agents.
  */

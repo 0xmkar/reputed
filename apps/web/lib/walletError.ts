@@ -39,9 +39,11 @@ export function describeWalletError(err: unknown): WalletErrorText {
   if (err instanceof BaseError) {
     if (err.walk((e) => e instanceof UserRejectedRequestError)) return { rejected: true, message: '', notSent: true };
     if (err.walk((e) => e instanceof InsufficientFundsError)) return { rejected: false, message: TOP_UP, notSent: true };
+    // The relay words a low balance in Hedera's terms, which viem does not classify.
     if (/insufficient (funds|balance|payer|account)/i.test(err.message)) return { rejected: false, message: TOP_UP, notSent: true };
     if (err.walk((e) => e instanceof UnauthorizedProviderError)) return { rejected: false, message: ACCOUNT_GONE, notSent: true };
     if (err.walk((e) => e instanceof ChainMismatchError)) return { rejected: false, message: err.shortMessage, notSent: true };
+    // Anything else may have come back after the relay accepted the send, so the outcome is open.
     return { rejected: false, message: err.shortMessage, notSent: false };
   }
   const message = err instanceof Error ? (err.message.split('\n')[0] ?? 'Something went wrong.') : 'Something went wrong.';

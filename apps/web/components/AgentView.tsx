@@ -25,7 +25,7 @@ function capitalise(text: string): string {
 function Hero({ agent }: { agent: AgentDetail }) {
   const image = agent.image?.startsWith('https://') ? agent.image : null;
   return (
-    <header className="agent-hero">
+    <header className="profile-top">
       {image ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img className="agent-image agent-image-lg" src={image} alt="" width={96} height={96} referrerPolicy="no-referrer" />
@@ -34,11 +34,13 @@ function Hero({ agent }: { agent: AgentDetail }) {
           {agent.name.slice(0, 1).toUpperCase()}
         </span>
       )}
-      <div className="agent-hero-text">
+      <div className="profile-text">
+        <div className="profile-meta">
+          <span className="mono">Agent #{agent.agentId}</span>
+          <span>Updated {formatDateTime(agent.updatedAt)}</span>
+          {agent.humanBacked && <HumanBackedBadge credential={agent.credentials.find((c) => c.kind === 'human-backed' && !c.revoked)} />}
+        </div>
         <h1>{agent.name}</h1>
-        <p className="muted">
-          <span className="mono">Agent #{agent.agentId}</span> · Updated {formatDateTime(agent.updatedAt)}
-        </p>
         <p>{agent.description}</p>
         {agent.tags.length > 0 && (
           <div className="chips">
@@ -50,10 +52,10 @@ function Hero({ agent }: { agent: AgentDetail }) {
           </div>
         )}
       </div>
-      <div className="agent-score">
+      <div className="profile-score">
         <ScoreRing value={agent.score.value} tier={agent.score.tier} isNew={agent.score.isNew} size="lg" />
         <TierBadge tier={agent.score.tier} isNew={agent.score.isNew} />
-        {agent.score.isNew && <span className="muted agent-score-note">Score inherited from the creator</span>}
+        {agent.score.isNew && <span className="agent-score-note">Score inherited from the creator</span>}
       </div>
     </header>
   );
@@ -92,22 +94,23 @@ function TrustBreakdown({ agent }: { agent: AgentDetail }) {
     if (!r.counted && r.exclusionReason) reasons.set(r.exclusionReason, (reasons.get(r.exclusionReason) ?? 0) + 1);
   }
   return (
-    <section className="card">
-      <h2>Trust breakdown</h2>
-      <dl className="stats stats-tight">
-        <div className="stat">
-          <dt className="muted">Reviews counted</dt>
-          <dd>{agent.reviewsCounted}</dd>
-        </div>
-        <div className="stat">
-          <dt className="muted">Reviews excluded</dt>
-          <dd>{agent.reviewsExcluded}</dd>
-        </div>
-        <div className="stat">
-          <dt className="muted">Confirmed penalties</dt>
-          <dd>{agent.penaltiesConfirmed}</dd>
-        </div>
-      </dl>
+    <dl className="profile-stats" aria-label="Trust breakdown">
+      <div>
+        <dt>Reviews counted</dt>
+        <dd>{agent.reviewsCounted}</dd>
+      </div>
+      <div>
+        <dt>Reviews excluded</dt>
+        <dd>{agent.reviewsExcluded}</dd>
+      </div>
+      <div>
+        <dt>Confirmed penalties</dt>
+        <dd>{agent.penaltiesConfirmed}</dd>
+      </div>
+      <div>
+        <dt>Creator score</dt>
+        <dd>{agent.creatorScore === null ? '—' : Math.round(agent.creatorScore)}</dd>
+      </div>
       {agent.reviewsExcluded > 0 && (
         <details>
           <summary>Why were reviews excluded?</summary>
@@ -124,7 +127,7 @@ function TrustBreakdown({ agent }: { agent: AgentDetail }) {
           )}
         </details>
       )}
-    </section>
+    </dl>
   );
 }
 
@@ -190,8 +193,8 @@ function OnChainLinks({ agent }: { agent: AgentDetail }) {
 
 function AgentSkeleton() {
   return (
-    <div aria-hidden="true">
-      <div className="agent-hero">
+    <div aria-hidden="true" className="profile">
+      <div className="profile-top">
         <span className="skeleton agent-image agent-image-lg" />
         <div className="agent-hero-text">
           <span className="skeleton skeleton-text" style={{ width: '12em', height: '1.8em' }} />
@@ -214,9 +217,6 @@ export function AgentView({ agentId }: { agentId: string }) {
   }
   if (isLoading || !agent) return <AgentSkeleton />;
 
-  // The badge links to the first credential of kind human-backed that has not been revoked.
-  const humanBackedCredential = agent.credentials.find((c) => c.kind === 'human-backed' && !c.revoked);
-
   return (
     <article className="agent-page">
       {agent.scoresStale && (
@@ -235,43 +235,43 @@ export function AgentView({ agentId }: { agentId: string }) {
         </div>
       )}
 
-      <Hero agent={agent} />
-      {agent.humanBacked && (
-        <div>
-          <HumanBackedBadge credential={humanBackedCredential} />
-        </div>
-      )}
-
-      <div className="agent-columns">
-        <CreatorCard agent={agent} />
+      <section className="profile">
+        <Hero agent={agent} />
         <TrustBreakdown agent={agent} />
-      </div>
-
-      <section>
-        <h2>Credentials</h2>
-        {agent.credentials.length === 0 ? (
-          <EmptyState message="No credentials yet." />
-        ) : (
-          <div className="agent-grid">
-            {agent.credentials.map((c) => (
-              <CredentialCard key={`${c.tokenId}-${c.serial}`} credential={c} />
-            ))}
-          </div>
-        )}
       </section>
 
-      <div className="agent-columns">
-        <Endpoints agent={agent} />
-        <OnChainLinks agent={agent} />
-      </div>
-
-      <section>
-        <div className="section-head">
-          <h2>Reviews</h2>
-          <ReviewSlot agent={agent} />
+      <div className="layout-2col">
+        <div className="agent-page">
+          <section>
+            <div className="section-head">
+              <h2>
+                Reviews
+                <span className="count">{agent.reviews.length}</span>
+              </h2>
+              <ReviewSlot agent={agent} />
+            </div>
+            <ReviewList reviews={agent.reviews} />
+          </section>
         </div>
-        <ReviewList reviews={agent.reviews} />
-      </section>
+
+        <aside className="rail">
+          <CreatorCard agent={agent} />
+          <section className="card">
+            <h2>Credentials</h2>
+            {agent.credentials.length === 0 ? (
+              <p className="muted">No credentials yet.</p>
+            ) : (
+              <div className="agent-grid">
+                {agent.credentials.map((c) => (
+                  <CredentialCard key={`${c.tokenId}-${c.serial}`} credential={c} />
+                ))}
+              </div>
+            )}
+          </section>
+          <Endpoints agent={agent} />
+          <OnChainLinks agent={agent} />
+        </aside>
+      </div>
     </article>
   );
 }

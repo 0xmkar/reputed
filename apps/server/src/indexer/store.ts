@@ -1,3 +1,8 @@
+// SQLite cache of everything the scorer has read: raw events with a cursor per source, review
+// files, payments, account lookups and misses, agent files, agents visitors asked for, and
+// snapshots. All of it can be rebuilt from the Mirror Node and the scores topic, which is why
+// a schema change simply drops it (SCHEMA_VERSION) and why the inputs hash never covers
+// anything stored here about how or when a fact was fetched.
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -325,6 +330,10 @@ export class Store implements Facts {
       .run(limit);
   }
 
+  /**
+   * A null sequence number marks a snapshot built but not yet on the topic. The publish fills it
+   * in, and COALESCE keeps it if the same epoch is saved again without one.
+   */
   saveSnapshot(snapshot: Snapshot, sequenceNumber: number | null): void {
     this.db
       .prepare(

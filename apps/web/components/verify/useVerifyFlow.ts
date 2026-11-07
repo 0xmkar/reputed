@@ -30,7 +30,11 @@ export type Phase =
   | { name: 'confirming'; tx: VerifyResponse | null }
   | { name: 'failed'; failure: Failure; request?: VerifyRequest };
 
-/** POST /api/rp-signature, the wallet signature, IDKit, then POST /api/verify. */
+/**
+ * The verify sequence: POST /api/rp-signature for a server-signed World ID request, an EIP-191
+ * signature binding this wallet to that request's nonce, the IDKit proof, then POST /api/verify with
+ * both. The server checks the proof, submits the registration transaction and returns its hash.
+ */
 export function useVerifyFlow(wallet: Address) {
   const { signMessageAsync } = useSignMessage();
   const [phase, setPhase] = useState<Phase>({ name: 'idle' });
@@ -71,6 +75,7 @@ export function useVerifyFlow(wallet: Address) {
       const tx = await postJson<VerifyResponse>('/api/verify', request);
       setPhase({ name: 'confirming', tx });
     } catch (err) {
+      // 'registered' means an earlier attempt landed: show it confirming, with no hash to link.
       const outcome = describeVerifyError(err, wallet);
       setPhase(
         outcome === 'registered'

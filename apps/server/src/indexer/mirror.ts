@@ -1,3 +1,7 @@
+// Mirror Node client for the indexer. Every read goes through getJson, which separates the
+// three outcomes callers need: a record, a definitive miss from Mirror itself (null), and
+// everything else, which is retried with exponential backoff and then thrown as MirrorError so
+// the caller holds the epoch back instead of recording a guess.
 import type { ConsensusTimestamp } from '../scoring/time.ts';
 import { toMirrorTransactionId, type PaymentProof } from '../scoring/txid.ts';
 import type { PaymentFact, PaymentTransfer } from '../scoring/types.ts';

@@ -5,6 +5,10 @@ import type { ReputedClient } from './client.ts';
 import { ReputedError } from './errors.ts';
 import { summarise } from './summary.ts';
 
+// The MCP face of ReputedClient: the same two reads as tools. Every failure becomes a tool result with
+// isError and the ReputedError code first in the text, so a model can tell AGENT_NOT_FOUND from an
+// outage and the session keeps going.
+
 function asText(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
 }
@@ -51,6 +55,7 @@ export function createMcpServer(client: ReputedClient): McpServer {
       try {
         const result = await client.verifyCounterparty(agentId, { minScore, humanBackedOnly });
         const { agent } = result;
+        // The same few fields on pass and fail, so the model has numbers to cite either way.
         const context = {
           agentId: agent.agentId,
           name: agent.name,

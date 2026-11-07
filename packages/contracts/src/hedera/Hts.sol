@@ -17,6 +17,7 @@ library Hts {
     /// 0x167 reverted instead of returning a code. On Hedera, reason is the ASCII status name.
     error HtsCallReverted(bytes4 selector, bytes reason);
 
+    /// Forwards value as the creation fee. The network takes only the fee; the rest stays with the caller.
     function createNft(IHederaTokenService.HederaToken memory token, uint256 value)
         internal
         returns (address tokenAddress)
@@ -25,6 +26,7 @@ library Hts {
         (, tokenAddress) = abi.decode(result, (int64, address));
     }
 
+    /// Amount 0 with one metadata entry is the NFT form of mintToken. Mints to the treasury.
     function mintOne(address token, bytes memory metadata) internal returns (int64 serial) {
         bytes[] memory batch = new bytes[](1);
         batch[0] = metadata;
@@ -33,6 +35,7 @@ library Hts {
         serial = serials[0];
     }
 
+    /// Auto-associates a receiver with a free slot; otherwise 184 (no slots) or 262 (slots used up).
     function transferNft(address token, address from, address to, int64 serial) internal {
         _call(0, abi.encodeCall(IHederaTokenService.transferNFT, (token, from, to, serial)));
     }
@@ -43,20 +46,28 @@ library Hts {
         (, frozen) = abi.decode(result, (int64, bool));
     }
 
+    /// 184 on an account with no association, 165 when it is already frozen.
     function freeze(address token, address account) internal {
         _call(0, abi.encodeCall(IHederaTokenService.freezeToken, (token, account)));
     }
 
+    /// 184 on an account with no association. Succeeds on an associated account that is not frozen.
     function unfreeze(address token, address account) internal {
         _call(0, abi.encodeCall(IHederaTokenService.unfreezeToken, (token, account)));
     }
 
+    /// Needs an unfrozen relationship (165 otherwise), a serial the account owns (253) and an account
+    /// that is not the treasury (185).
     function wipeOne(address token, address account, int64 serial) internal {
         int64[] memory serials = new int64[](1);
         serials[0] = serial;
         _call(0, abi.encodeCall(IHederaTokenService.wipeTokenAccountNFT, (token, account, serials)));
     }
 
+    /// Two failure shapes, kept apart so callers can tell them from each other: the system contract
+    /// reverting (HtsCallReverted, raw reason) and it returning a non-SUCCESS code (HtsCallFailed).
+    /// Both carry the selector, so a revert from a multi-step issue says which step failed. Every HTS
+    /// function returns the response code as its first word, so decoding int64 first works for all.
     function _call(uint256 value, bytes memory callData) private returns (bytes memory result) {
         bool ok;
         (ok, result) = SYSTEM_CONTRACT.call{value: value}(callData);

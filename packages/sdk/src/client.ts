@@ -1,6 +1,11 @@
 import type { AgentDetail, ApiError } from '@reputed/shared';
 import { ReputedError, type GateFailure } from './errors.ts';
 
+// A small typed client over the read endpoints. Two kinds of outcome are kept apart on purpose: a gate
+// decision ("do not pay this agent") is a returned value, while anything that stopped the check itself
+// (bad input, unreachable API, 404) throws a ReputedError with a code. Responses are the shared API
+// types, so the server's contract is the client's type.
+
 export interface ReputedClientOptions {
   /** Base URL of the Reputed server, for example http://localhost:4000. */
   apiUrl: string;
@@ -58,6 +63,7 @@ export class ReputedClient {
     const agent = await this.getAgent(agentId);
     const fail = (reason: GateFailure, message: string): VerifyResult => ({ ok: false, reason, message, agent });
 
+    // Checked in order of severity. Compromised is refused regardless of options; a score equal to minScore passes.
     if (agent.status === 'compromised') {
       return fail('AGENT_COMPROMISED', `Agent ${agent.agentId} was reported compromised.`);
     }
@@ -90,6 +96,7 @@ export class ReputedClient {
     }
 
     if (!res.ok) {
+      // The body may not be JSON (a proxy error page), so it is optional.
       const body = (await res.json().catch(() => null)) as ApiError | null;
       if (res.status === 404) {
         throw new ReputedError('AGENT_NOT_FOUND', body?.message ?? 'No such agent.', { status: 404 });

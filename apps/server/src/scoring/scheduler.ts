@@ -1,3 +1,8 @@
+// The epoch loop: sync, reconcile with the topic once per process, publish the config once per
+// series, then publish every complete epoch not yet on the topic. A tick that throws is logged
+// and retried after pollMs; nothing counts as published until the HCS receipt returns. Epochs
+// are judged against the mirror's consensus time, not the wall clock, so the loop cannot
+// publish an epoch the mirror has not finished ingesting.
 import { loadHederaConfig } from '../config.ts';
 import { logReason } from '../errors.ts';
 import { MirrorError } from '../indexer/mirror.ts';

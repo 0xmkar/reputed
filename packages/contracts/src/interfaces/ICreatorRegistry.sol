@@ -2,10 +2,16 @@
 pragma solidity ^0.8.20;
 
 /// The interface server/, web/ and the scorer build against. Change it only with all of them agreed.
+/// Grants, syncAgentWallet and their events are deliberately absent: they live on CreatorRegistry, so
+/// this surface did not change for v2.
 interface ICreatorRegistry {
     event CreatorRegistered(bytes32 indexed nullifierHash, address indexed wallet);
+    /// serial is the credential issued to agentWallet. Pair it with CredentialRevoked by holder and serial.
     event AgentLinked(uint256 indexed agentId, address indexed creator, address indexed agentWallet, int64 serial);
+    /// Emitted once per agent. timestamp equals compromisedAt(agentId).
     event AgentCompromised(uint256 indexed agentId, address indexed creator, uint256 timestamp);
+    /// Emitted for every credential, including the ones linkAgent and syncAgentWallet issue, so
+    /// holder plus serial across these two events is a complete ledger of the collection.
     event CredentialIssued(address indexed holder, int64 serial);
     event CredentialRevoked(address indexed holder, int64 serial);
 

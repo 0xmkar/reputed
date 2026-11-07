@@ -1,3 +1,6 @@
+// Every error leaves the server as {code, message}. ApiHttpError carries a code from the
+// shared enum; Fastify's own errors (bad JSON, a 404, a 429 from the limiter) are mapped onto
+// the same vocabulary here so clients switch on one set of codes.
 import type { FastifyError, FastifyInstance } from 'fastify';
 import type { ApiErrorCode } from '@reputed/shared';
 
@@ -51,6 +54,7 @@ export function registerErrorHandling(app: FastifyInstance): void {
     if (status >= 400 && status < 500) {
       return reply.code(status).send({ code: 'BAD_REQUEST', message: err.message });
     }
+    // Only a 5xx is logged, and only its scrubbed reason: 4xx are the client's mistakes.
     req.log.error({ reason: logReason(err) }, 'unhandled error');
     return reply.code(500).send({ code: 'INTERNAL_ERROR', message: 'Internal server error.' });
   });

@@ -3,6 +3,8 @@ import { injected, walletConnect } from 'wagmi/connectors';
 import { defineChain } from 'viem';
 import { HEDERA_TESTNET } from '@reputed/shared';
 
+// Hedera testnet as a viem chain, built from the shared constants so the web app, server and SDK
+// agree on the chain ID and endpoints. wagmi only ever knows this one chain.
 export const hederaTestnet = defineChain({
   id: HEDERA_TESTNET.id,
   name: HEDERA_TESTNET.name,
@@ -38,5 +40,6 @@ export const wagmiConfig = createConfig({
   // Lists every extension wallet that announces itself (EIP-6963), HashPack's included.
   multiInjectedProviderDiscovery: true,
   transports: { [hederaTestnet.id]: http(HEDERA_TESTNET.rpcUrl) },
+  // The server render never sees a wallet; wagmi restores the connection after hydration.
   ssr: true,
 });

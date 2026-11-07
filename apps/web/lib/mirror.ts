@@ -1,6 +1,9 @@
 import type { Address } from 'viem';
 import { HEDERA_TESTNET } from '@reputed/shared';
 
+// Account checks run before a wallet is asked to sign. The server verifies signatures by recovering
+// an EVM address, so the account's key type and the address form the wallet shows both matter.
+
 const MIRROR = `${HEDERA_TESTNET.mirrorNode}/api/v1`;
 
 async function mirrorGet<T>(path: string, signal?: AbortSignal): Promise<T | null> {
@@ -24,6 +27,7 @@ type AccountProblem =
   /** The wallet uses the long-zero address, but signatures recover to the key's EVM address. */
   | { kind: 'wrong-address'; evmAddress: string | null };
 
+/** In order: the account exists, its key is ECDSA, and the address in use is the key's EVM address. */
 async function accountProblem(address: Address, signal?: AbortSignal): Promise<AccountProblem | null> {
   const account = await mirrorGet<MirrorAccount>(`/accounts/${address}?transactions=false`, signal);
   if (!account) return { kind: 'no-account' };

@@ -32,11 +32,13 @@ export function GrantRow({ grant, creator, canSign }: { grant: GrantSummary; cre
   const queryClient = useQueryClient();
   const { writeContractAsync } = useWriteContract();
   const [label, setLabel] = useState<string | undefined>();
+  // Read in an effect: the label is in this browser's storage, which the server render cannot see.
   useEffect(() => setLabel(getGrantLabel(grant.grantKey)), [grant.grantKey]);
 
   const state = grantState(grant);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['grants', creator] });
 
+  /** `grants` returns (creator, expiresAt, maxAgents, used, revoked). */
   async function isRevoked(): Promise<true | null> {
     const row = await chainClient.readContract({ address: CREATOR_REGISTRY, abi: creatorRegistryAbi, functionName: 'grants', args: [grant.grantKey] });
     return row[4] ? true : null;

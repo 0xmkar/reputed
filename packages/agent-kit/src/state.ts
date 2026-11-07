@@ -17,6 +17,7 @@ export interface StateStore {
   save(key: string, state: OnboardState): void;
 }
 
+/** Cloned on the way in and out, so a caller holding a reference cannot change what was saved. */
 export class MemoryStateStore implements StateStore {
   readonly #states = new Map<string, OnboardState>();
   load(key: string): OnboardState {
@@ -27,7 +28,11 @@ export class MemoryStateStore implements StateStore {
   }
 }
 
-/** One JSON file, keyed by network, registry and account. Written whole, then renamed into place. */
+/**
+ * One JSON file, keyed by network, registry and account. Written whole, then renamed into place, so a
+ * crash mid-write leaves the previous file rather than a truncated one. An unreadable file reads as
+ * empty: onboarding then falls back to what the chain says.
+ */
 export class FileStateStore implements StateStore {
   constructor(readonly path: string) {}
 
@@ -47,6 +52,7 @@ export class FileStateStore implements StateStore {
     const all = this.#readAll();
     all[key] = state;
     mkdirSync(dirname(this.path), { recursive: true });
+    // The pid keeps two processes from sharing a temp file. 0600 although the file holds only IDs, never the key.
     const temp = `${this.path}.${process.pid}.tmp`;
     writeFileSync(temp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
     renameSync(temp, this.path);

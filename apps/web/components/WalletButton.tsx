@@ -23,6 +23,7 @@ function useConnectFlow() {
   const connectWith = (connector: Connector) => {
     // Closed first: the WalletConnect QR modal can't show above an open <dialog>.
     setPicking(false);
+    // A deliberate connect lifts the "declined" mark, so SessionSync may ask for a signature again.
     allowSignInPrompt();
     connect(
       { connector },
@@ -62,6 +63,10 @@ export function ConnectButton({ children = 'Connect wallet' }: { children?: Reac
   );
 }
 
+/**
+ * The header's wallet control. A signed-in wallet shows even when it is not connected, marked
+ * "Not connected" with Reconnect in the menu, because reading needs only the address.
+ */
 export function WalletButton() {
   const { address, live } = useIdentity();
   const signOut = useSignOut();

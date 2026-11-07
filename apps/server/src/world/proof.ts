@@ -1,3 +1,7 @@
+// Local checks on an IDKit result before World's verifier sees it. Replay: this server keeps
+// no list of nonces it signed. A proof replayed for the same wallet meets its nullifier already
+// registered on-chain (409); for another wallet the signal hash check below fails; and the
+// rp_context it was made under carries a five-minute expiry (signing.ts).
 import { walletBindingMessage } from '@reputed/shared';
 import { numberToHex, type Address, type Hex } from 'viem';
 import { z } from 'zod';

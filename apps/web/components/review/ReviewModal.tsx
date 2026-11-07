@@ -108,6 +108,11 @@ interface FormProps {
   onClose: () => void;
 }
 
+/**
+ * The form and its send. `submit` runs in order: build the file, sign it, upload it, record the
+ * attempt, then ask the wallet for giveFeedback. Everything before the wallet is free and repeatable;
+ * from the wallet on, a retry is only offered once Hedera has been checked for the first send.
+ */
 function ReviewForm({ agent, client, onBusyChange, onHoldChange, onConfirmed, onClose }: FormProps) {
   const endpoints = useMemo(() => agentEndpoints(agent), [agent]);
   // Read once: a reload lands here with the review still on its way, or with its outcome unknown.
@@ -192,6 +197,7 @@ function ReviewForm({ agent, client, onBusyChange, onHoldChange, onConfirmed, on
       uploaded.current = { key, response };
       return response;
     } catch (err) {
+      // Nothing reached the wallet, so TransactionButton offers a plain Retry.
       throw new NotSentError(err);
     }
   }

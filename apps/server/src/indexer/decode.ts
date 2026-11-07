@@ -1,3 +1,7 @@
+// Decodes Mirror Node contract logs into plain events. Each ABI slice holds only the events the
+// fold uses, so anything else decodes to null and is never stored. Args are flattened to
+// JSON-safe values, bigints as decimal strings and addresses lowercased, so stored rows compare
+// byte for byte on a rebuild.
 import { creatorRegistryAbi, identityRegistryAbi, reputationRegistryAbi } from '@reputed/shared';
 import { decodeEventLog, type Abi, type Hex } from 'viem';
 import type { ConsensusTimestamp } from '../scoring/time.ts';

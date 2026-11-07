@@ -10,6 +10,11 @@ import { onboard, type AgentProfile, type OnboardResult } from './onboard';
 import { createReputedPlugin } from './plugin';
 import { FileStateStore, MemoryStateStore, type StateStore } from './state';
 
+// The public entry point. `connect` validates the inputs that need no network, fetches the deployment
+// from /api/config (contract addresses and the Mirror Node URL are not baked into the package), runs
+// onboarding, and returns an object that holds only the agent ID and a read client. The API key is
+// used inside onboarding to sign and is not kept.
+
 export interface ReputedConnectOptions {
   /** The agent's Hedera client. Its operator account becomes the agent's on-chain identity. */
   client: Client;
@@ -33,6 +38,7 @@ export interface ReputedConnectOptions {
 
 export const DEFAULT_STATE_FILE = '.reputed/state.json';
 
+/** The two Reputed API calls onboarding makes (config, agent file). Error messages name the origin, never the body sent. */
 async function apiJson<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -80,6 +86,7 @@ export class Reputed {
     if (!apiUrl) {
       throw new ReputedAgentError('NOT_CONFIGURED', 'Pass apiUrl or set REPUTED_API_URL to the address of the Reputed API.');
     }
+    // Checked before any request; the error message never contains the key.
     try {
       parseApiKey(options.apiKey);
     } catch (error) {

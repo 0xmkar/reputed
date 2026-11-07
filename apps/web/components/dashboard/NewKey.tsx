@@ -38,6 +38,7 @@ export function NewKey({ creator }: { creator: Address }) {
   const valid = Number.isInteger(days) && days >= 1 && days <= 365 && Number.isInteger(maxAgents) && maxAgents >= 1 && maxAgents <= 1000;
 
   function start() {
+    // 32 random bytes from this browser. Only the address derived from them goes on-chain.
     const key = newApiKey('test');
     setDraft({ key, grant: grantAddress(key), label, days, maxAgents });
     setAuthorized(false);
@@ -57,6 +58,7 @@ export function NewKey({ creator }: { creator: Address }) {
     }
   }
 
+  /** Finds a lost authorize: a grant row with a creator set means the transaction landed. */
   async function onChain(grant: Address): Promise<true | null> {
     const [owner] = await chainClient.readContract({
       address: CREATOR_REGISTRY,
@@ -131,6 +133,7 @@ export function NewKey({ creator }: { creator: Address }) {
               })
             }
             onConfirmed={() => {
+              // The label is saved only once the grant exists, keyed by its address.
               saveGrantLabel(draft.grant, draft.label);
               setAuthorized(true);
               refresh();

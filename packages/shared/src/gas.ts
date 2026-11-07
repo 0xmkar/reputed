@@ -35,6 +35,7 @@ export function registerGasEstimate(uriBytes: number): number {
 
 /** The URI is stored on-chain, so a long agent file needs more than the flat limit. */
 export function registerGas(uriBytes: number): bigint {
+  // 25% over the linear estimate, and never below the flat table value.
   const padded = (BigInt(registerGasEstimate(uriBytes)) * 5n) / 4n;
   return padded > GAS.register ? padded : GAS.register;
 }
@@ -44,6 +45,7 @@ export const LINK_GAS_ESTIMATE = 1_170_000;
 export const ASSOCIATE_GAS_ESTIMATE = 782_243;
 
 // Hedera prices gas in dollars: 124 tinybar at 6.87 cents per HBAR on testnet, 2026-11-06.
+// HBAR_PER_GAS therefore drifts with the exchange rate; balance checks add headroom on top.
 const USD_PER_GAS = 0.000_000_085;
 const HBAR_PER_GAS = 0.000_001_24;
 

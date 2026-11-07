@@ -1,30 +1,16 @@
 'use client';
 
-import Link from 'next/link';
-import { useIdentity } from '@/lib/useIdentity';
-import { NetworkPill } from './NetworkPill';
-import { WalletButton } from './WalletButton';
+import { usePathname } from 'next/navigation';
+import { Nav } from './Nav';
 
+/** The navy top panel with the nav. The landing page draws the same nav inside its hero instead. */
 export function Header() {
-  const { address } = useIdentity();
+  const pathname = usePathname();
+  if (pathname === '/') return null;
   return (
-    <header className="header">
-      <div className="header-inner container">
-        <Link href="/" className="brand">
-          Reputed
-        </Link>
-        <nav className="nav" aria-label="Main">
-          <Link href="/explore">Explore</Link>
-          {address && <Link href={`/creator/${address}`}>My agents</Link>}
-          {address && <Link href="/dashboard">Dashboard</Link>}
-        </nav>
-        <div className="header-right">
-          <Link href="/dashboard" className="btn btn-primary">
-            Add agent
-          </Link>
-          <NetworkPill />
-          <WalletButton />
-        </div>
+    <header className="topbar container">
+      <div className="topbar-panel">
+        <Nav />
       </div>
     </header>
   );

@@ -31,6 +31,7 @@ export function sessionMessage(wallet: Address, issuedAt: number): string {
   ].join('\n');
 }
 
+/** Checksums the address part, so a lowercase and a checksummed CAIP-10 give the same bytes. */
 function checksummedCaip(caip: string): string {
   const split = caip.lastIndexOf(':') + 1;
   return `${caip.slice(0, split)}${getAddress(caip.slice(split))}`;
@@ -46,6 +47,7 @@ export function serializeReviewFile(file: ReviewFile): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
       agentRegistry: checksummedCaip(file.agentRegistry),
+      // A JSON number while it is exact, a string beyond 2^53: either way the bytes are deterministic.
       agentId: agentId <= Number.MAX_SAFE_INTEGER ? Number(agentId) : agentId.toString(),
       clientAddress: checksummedCaip(file.clientAddress),
       createdAt: file.createdAt,
@@ -54,6 +56,7 @@ export function serializeReviewFile(file: ReviewFile): Uint8Array {
       tag1: file.tag1,
       tag2: file.tag2,
       endpoint: file.endpoint,
+      // JSON.stringify drops undefined, so a missing comment and an absent key serialise the same.
       comment: file.comment,
       proofOfPayment: file.proofOfPayment,
     }),

@@ -55,6 +55,7 @@ export function ReportCompromised({ agent }: { agent: AgentSummary }) {
 
   const refreshAgent = () => void queryClient.invalidateQueries({ queryKey: ['agent', agent.agentId] });
 
+  /** compromisedAt stays 0 until reported, so any other value means the report landed. */
   async function findReport(): Promise<true | null> {
     const at = await chainClient.readContract({ address: CREATOR_REGISTRY, abi: creatorRegistryAbi, functionName: 'compromisedAt', args: [agentId] });
     return at !== 0n ? true : null;

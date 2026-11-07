@@ -1,3 +1,6 @@
+// POST /api/session issues a token for a fresh wallet signature; GET /api/session reads one.
+// No list of used signatures is kept: a captured signature is good for the same wallet only,
+// and only inside the five-minute window around its issuedAt.
 import { sessionMessage, type SessionInfo, type SessionResponse } from '@reputed/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { getAddress, isAddress } from 'viem';

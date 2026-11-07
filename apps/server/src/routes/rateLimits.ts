@@ -1,3 +1,7 @@
+// Three kinds of limit. Per-IP buckets (limiter + byIp) bound one client. Proven limits
+// (provenLimiter) key on an identity the handler has already verified, such as a wallet that
+// signed. Gates bound what the whole process spends on resources the operator pays for:
+// HCS submits and Mirror Node reads.
 import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ReviewBudget } from '../config.ts';
@@ -118,6 +122,7 @@ function createGate(
   refuse: (retryAfterSeconds: number) => ApiHttpError,
   now: () => number,
 ): Gate {
+  // Fixed window, not sliding: `used` resets once windowMs has passed since the window began.
   let windowStart = now();
   let used = 0;
   let active = 0;

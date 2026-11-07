@@ -1,3 +1,7 @@
+// Every read onboarding makes goes to the Mirror Node REST API, whose base URL comes from the Reputed
+// server's /api/config. Contract reads use /contracts/call (an eth_call), so no JSON-RPC relay or
+// extra endpoint has to be configured, and transaction results come with their logs and revert data,
+// which a receipt does not carry.
 import type { Address, Hex } from 'viem';
 import { REGISTERED, type TxLog } from '@reputed/shared';
 import { ReputedAgentError } from './errors';
@@ -5,7 +9,9 @@ import { ReputedAgentError } from './errors';
 export interface MirrorAccount {
   account: string;
   evm_address: string | null;
+  /** In tinybar. */
   balance: { balance: number };
+  /** -1 means unlimited, 0 none; a positive count may already be used up. */
   max_automatic_token_associations: number;
 }
 
@@ -58,6 +64,10 @@ export class MirrorClient {
     this.#retries = options.retries ?? 4;
   }
 
+  /**
+   * Retries 429 and 5xx with doubling waits from 500 ms, each attempt under a 15 s deadline. A 404 is
+   * returned, not retried: it means "not indexed yet", and the caller decides how long to wait for that.
+   */
   async #request(path: string, init?: RequestInit): Promise<Response> {
     let last: unknown;
     for (let attempt = 0; attempt <= this.#retries; attempt++) {
@@ -101,6 +111,8 @@ export class MirrorClient {
       | { result?: Hex; _status?: { messages?: { data?: Hex }[] } }
       | null;
     if (res.ok && body?.result) return body.result;
+    // A revert comes back as HTTP 400 with the revert data in _status.messages, or as 200 with no result.
+    // Either way it is a contract answer, not an outage, so it is kept apart from MIRROR_ERROR.
     if (res.status === 400 || res.status === 200) throw new CallReverted(body?._status?.messages?.[0]?.data ?? null);
     throw new ReputedAgentError('MIRROR_ERROR', `The Mirror Node answered ${res.status} to a contract read.`);
   }
@@ -123,6 +135,7 @@ export class MirrorClient {
       .filter((call) => call.to?.toLowerCase() === registry && call.result === 'SUCCESS' && call.function_parameters.startsWith(REGISTER_URI_SELECTOR))
       .slice(0, MAX_REGISTRATION_LOOKUPS);
 
+    // The list endpoint carries no logs, so each candidate costs one more request.
     const logs: RegisteredLog[] = [];
     for (const call of calls) {
       const detail = await this.getContractResult(call.hash);

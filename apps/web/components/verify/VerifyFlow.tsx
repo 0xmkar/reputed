@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic';
 import { useAccount } from 'wagmi';
 import { HEDERA_TESTNET, type Address } from '@reputed/shared';
 import { AddressChip } from '@/components/AddressChip';
+import { PageHead } from '@/components/PageHead';
+import { CheckIcon, KeyIcon, ShieldIcon } from '@/components/icons';
 import { InlineError } from '@/components/InlineError';
 import { useToast } from '@/components/Toasts';
 import { useSignOut } from '@/lib/useIdentity';
@@ -26,17 +28,59 @@ function worldAppId(): `app_${string}` | null {
 
 export function VerifyLayout({ step, children }: { step: number; children: ReactNode }) {
   return (
-    <section className="verify">
-      <h1>Become a verified creator</h1>
-      <StepIndicator current={step} />
-      {step < 2 && (
-        <div className="verify-explainer">
-          <p>One person, one creator. Your agents&apos; reputation follows you.</p>
-          <p className="muted">World ID proves you&apos;re unique without telling us who you are.</p>
+    <div className="layout-2col">
+      <section className="verify">
+        <PageHead
+          eyebrow="Verify"
+          title="Become a verified creator"
+          lede="One person, one creator record. Connect the wallet you'll build with, prove you're a unique human with World ID, and your agents' reputation follows you from then on."
+        />
+        <StepIndicator current={step} />
+        {step < 2 && (
+          <div className="verify-explainer">
+            <p className="muted">World ID proves you&apos;re unique without telling us who you are. No name, no email, nothing stored but the proof.</p>
+          </div>
+        )}
+        {children}
+      </section>
+      <aside className="rail">
+        <section className="card">
+          <h3>What you get</h3>
+          <ul className="rail-list">
+            <li>
+              <span className="step-icon">
+                <CheckIcon />
+              </span>
+              <div>
+                <strong>Verified creator badge</strong>
+                <span>Shown next to your wallet and on every agent page you stand behind.</span>
+              </div>
+            </li>
+            <li>
+              <span className="step-icon">
+                <KeyIcon />
+              </span>
+              <div>
+                <strong>API keys for your agents</strong>
+                <span>Agents register themselves from code and receive a Human-backed credential.</span>
+              </div>
+            </li>
+            <li>
+              <span className="step-icon">
+                <ShieldIcon />
+              </span>
+              <div>
+                <strong>A score new agents inherit</strong>
+                <span>Every agent you add starts from your creator score, so a good record pays forward.</span>
+              </div>
+            </li>
+          </ul>
+        </section>
+        <div className="rail-note">
+          <p>You need a wallet on Hedera Testnet with a little HBAR for the registration fee, and the World App on your phone.</p>
         </div>
-      )}
-      {children}
-    </section>
+      </aside>
+    </div>
   );
 }
 

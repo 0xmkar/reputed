@@ -8,6 +8,10 @@ import {
 import type { Hex } from 'viem';
 import { ReputedAgentError } from './errors';
 
+// The only place the Hedera SDK sends anything. Reads go through the Mirror Node, so onboarding needs
+// just two operations from an account: execute a contract call and associate a token. Tests implement
+// this interface in memory and never touch a Client.
+
 export interface TxOutcome {
   /** In the Mirror Node's spelling: 0.0.1234-1700000000-123456789. */
   transactionId: string;
@@ -28,6 +32,7 @@ export function toMirrorTransactionId(id: string): string {
   return `${account}-${time.replace('.', '-')}`;
 }
 
+/** Waits for the receipt and reports its status. The receipt has no logs; the Mirror Node is read for those afterwards. */
 async function settle(client: Client, response: { transactionId: { toString(): string }; getReceipt(client: Client): Promise<{ status: { toString(): string } }> }): Promise<TxOutcome> {
   const transactionId = toMirrorTransactionId(response.transactionId.toString());
   try {
@@ -40,6 +45,11 @@ async function settle(client: Client, response: { transactionId: { toString(): s
   }
 }
 
+/**
+ * Maps a failure before consensus (precheck) to an error code. Nothing was recorded or charged, so the
+ * caller can drop any state it wrote for the send. Receipt errors carry a consensus result and are
+ * handled by settle instead.
+ */
 function precheckFailure(error: unknown): ReputedAgentError | null {
   const status = (error as { status?: { toString(): string } } | null)?.status?.toString();
   if (!status || !(error instanceof Error) || error.name === 'ReceiptStatusError') return null;
@@ -62,6 +72,7 @@ export function clientGateway(client: Client): HederaGateway {
         const response = await new ContractExecuteTransaction()
           .setContractId(ContractId.fromString(contractId))
           .setGas(Number(gas))
+          // Calldata is ABI-encoded by viem upstream, so one ABI serves both the Mirror Node reads and the sends.
           .setFunctionParameters(Buffer.from(data.slice(2), 'hex'))
           .execute(client);
         return await settle(client, response);
